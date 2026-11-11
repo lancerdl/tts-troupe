@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tts-troupe"
+version = "0.1.0"
+description = "OpenAI-compatible TTS server with pluggable model adapters"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Matthew Nikkanen", email = "mjnikkan@gmail.com"},
+]
+keywords = ["tts", "text-to-speech", "openai", "fastapi", "voice-cloning"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic",
+    "PyYAML",
+    "numpy",
+    "pydub",
+]
+
+[project.optional-dependencies]
+transcribe = [
+    "faster-whisper>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/lancerdl/tts-troupe"
+Repository = "https://github.com/lancerdl/tts-troupe"
+Issues = "https://github.com/lancerdl/tts-troupe/issues"
+
+[project.scripts]
+tts-troupe = "server.server:main"
+tts-troupe-transcribe = "server.transcribe_voices:main"
+
+[tool.setuptools]
+packages = ["server", "framework"]
+
+[tool.setuptools.package-data]
+server = ["config.yaml.example", "static/*"]

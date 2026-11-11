@@ -1,0 +1,109 @@
+# =============================================================================
+# model.yaml — manifest for one TTS model repo under models/<repo>/
+#
+# Copy this template to `model.yaml` at the root of a model repo and edit it.
+# It is the contract between the server and the model: the server reads ONLY
+# this manifest to register the model (name, aliases, capabilities, presets,
+# routing) — no model code is imported or executed at registration time.
+#
+# Keys marked REQUIRED must be present. Everything else is optional and falls
+# back to the default shown. Values below are illustrative placeholders.
+# =============================================================================
+
+# REQUIRED. Canonical adapter name — the routing key a client sends as
+# `"model"`, and the name shown in logs and /v1/voices.
+name: my-tts
+
+# OPTIONAL (default: none). Additional `"model"` strings that resolve to this
+# model. They must be unique across models; a collision refuses the later one.
+aliases: [my-alias]
+
+# OPTIONAL (default: false). When true the server strips [bracket] tokens from
+# input text before dispatch. Leave false for models that speak [tag] tokens
+# natively (paralinguistic tags); set true for models with no native use.
+strip_brackets: false
+
+# OPTIONAL (default: ""). Upstream source URL, logged at startup for provenance.
+source: https://github.com/owner/my-tts
+
+# REQUIRED. Module (a .py file, without the extension) at the repo root that
+# exposes the adapter factory class named in `setup.factory` below. It is
+# imported INSIDE the model's own worker process — never by the server.
+module: adapter
+
+# OPTIONAL block, but effectively required: the only supported runtime is a
+# subprocess worker, so any other (or missing) `mode` fails registration.
+runtime:
+  # REQUIRED within this block. Must be exactly "subprocess".
+  mode: subprocess
+  # OPTIONAL (default: .venv/Scripts/python.exe). Interpreter used for the
+  # worker; a relative path is resolved against the model repo directory.
+  python: .venv/Scripts/python.exe
+  # OPTIONAL (default: the generic harness framework/model_worker.py). Override
+  # only if the model needs a custom worker script; relative resolves likewise.
+  # worker: my_worker.py
+
+# REQUIRED block. Describes how to construct the adapter.
+setup:
+  # REQUIRED. Factory class in `module`, called as
+  # factory(config=<model config>, model_dir=<repo dir>).
+  factory: MyAdapter
+  # OPTIONAL (default: none). A config file at the repo root; its parsed YAML is
+  # passed to the factory as `config`. A missing file yields an empty config.
+  config_file: config.yaml
+
+# OPTIONAL (default: none). Each declared capability enables one interaction
+# type; omit any the model does not support. Keys:
+#   voice_default — preset voices        (text + a built-in speaker name)
+#   voice_clone   — reference-audio cloning
+#   voice_create  — voice design         (text + a free-form description)
+# A capability is either DECLARATIVE (call/args/result) or NATIVE (an
+# `implementation` key, meaning the adapter object implements the interaction
+# itself). The three blocks below show both forms.
+capabilities:
+
+  # --- preset voices --------------------------------------------------------
+  voice_default:
+    # REQUIRED. Method on the adapter object (or the `instance` target) to call.
+    call: synthesize_preset
+    # OPTIONAL. If set, the call target is adapter.get_instance(<key>) instead
+    # of the adapter object (for per-checkpoint sub-objects).
+    # instance: custom
+    # REQUIRED. Maps the method's keyword args to server values or literals.
+    #   bare string   -> pass that server argument through
+    #                    (voice_default binds: text, voice, instruct)
+    #   {const: v}    -> a literal value
+    #   {config: k}   -> key `k` from the model's own config_file
+    args: { text: text, voice: voice, instruct: instruct, language: {const: Auto} }
+    # OPTIONAL (default: {audio: {index: 0}, sample_rate: {index: 1}}). Index
+    # paths into the returned value locating the audio array and sample rate.
+    result: { audio: {index: [0, 0]}, sample_rate: {index: 1} }
+    # OPTIONAL. Preset names advertised by this model (used by /v1/voices and
+    # for voice resolution).
+    presets: [Nova, Echo]
+    # OPTIONAL. Voice used when the client sends an empty `voice`.
+    default_voice: Nova
+
+  # --- reference-audio cloning ----------------------------------------------
+  voice_clone:
+    # NATIVE form: the adapter object implements
+    # synthesize_clone(text, ref_audio_path, ref_text) itself.
+    implementation: native
+    # OPTIONAL. Harness-owned ICL prompt caching: name the adapter methods that
+    # extract and reuse a clone prompt, the checkpoint key, and cache versions
+    # (bump a version to invalidate cached prompts).
+    # clone_prompt:
+    #   extract: extract_clone_prompt
+    #   synthesize: synthesize_with_prompt
+    #   checkpoint: base
+    #   versions: {adapter: "1", format: "1"}
+    #
+    # DECLARATIVE alternative (drop `implementation` and use call/args/result):
+    # bindable server args for voice_clone are text, ref_audio_path, ref_text.
+
+  # --- voice design ---------------------------------------------------------
+  voice_create:
+    call: synthesize_design
+    # instance: design
+    args: { text: text, description: description, language: {const: Auto} }
+    result: { audio: {index: [0, 0]}, sample_rate: {index: 1} }

@@ -1,0 +1,35 @@
+# Model repositories cloned into models/ are wholly gitignored.
+models/
+
+# Python bytecode caches
+__pycache__/
+*.pyc
+
+# Local runtime config (first-run copy of config.yaml.example)
+server/config.yaml
+
+# Voice library runtime artifacts (auto-recreated)
+voices/
+voices.txt
+*_voices.txt
+
+# Stray tool output
+.pytest_err.txt
+.pytest_out.txt
+
+# Build / install artifacts
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Server runtime logs
+logs/
+*.log
+
+# Server virtual environment
+.venv/
+
+# Cline
+.cline/old/
+.cline/rules/

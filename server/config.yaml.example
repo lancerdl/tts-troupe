@@ -1,0 +1,49 @@
+# ==============================================================================
+# TTS Troupe Configuration
+# ==============================================================================
+
+server:
+  host: "127.0.0.1"
+  port: 8000
+  # Default audio output format when the client omits response_format
+  # Supported: mp3, wav, pcm
+  response_format: "mp3"
+  # Strip <tag> </tag> formatting sent by frontends like SillyTavern while preserving inner text
+  strip_tags: true
+  # Worker wire deadlines (subprocess runtime)
+  synthesis_timeout_seconds: 60
+  cold_start_timeout_seconds: 300
+  recovery_cooldown_seconds: 60
+
+models:
+  # Model repo names (subdirectories of models/) to load.
+  # Each repo provides model.yaml + an adapter class; capabilities and
+  # preset voices are discovered from the manifest at startup.
+  #
+  # No models are bundled. Add your own model repo name(s) below, e.g.:
+  #   list: ["faster-qwen3-tts"]
+  list: []
+
+  # Hardware hints passed to every model adapter (adapters may override)
+  device: "cuda"
+  dtype: "bfloat16"
+  enable_prefetch: true
+
+voices:
+  # Primary folder containing reference .wav files and .reference.txt transcripts.
+  # CHANGE THIS to a local path (relative paths are resolved against the repo root).
+  voices_dir: "voices"
+
+memory_management:
+  # Minutes before unloading idle models from GPU VRAM (0 = keep resident in VRAM)
+  model_idle_timeout_minutes: 60
+
+  # Minutes before evicting inactive voice clone prompts from memory cache
+  prompt_cache_ttl_minutes: 30
+
+  # Seconds to consider recent CUDA operations valid without re-pinging the GPU
+  cuda_check_cooldown_seconds: 5.0
+
+  # Maximum seconds allowed for CUDA health probe before marking context frozen/hung
+  cuda_health_timeout_seconds: 2.0
+
