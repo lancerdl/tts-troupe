@@ -59,8 +59,8 @@ def test_export_voice_list_per_model_filename(tmp_path):
 
 
 def test_model_voice_options_design_target_first():
-    assert model_voice_options(["Vivian", "Ryan"], ["x"], "custom") == [
-        "custom", "Vivian", "Ryan", "x"]
+    assert model_voice_options(["Vivian", "Ryan"], ["x"], "design") == [
+        "design", "Vivian", "Ryan", "x"]
 
 
 def test_model_voice_options_without_design_support():
@@ -68,4 +68,4 @@ def test_model_voice_options_without_design_support():
 
 
 def test_model_voice_options_only_design_target():
-    assert model_voice_options([], ["x"], "custom") == ["custom", "x"]
+    assert model_voice_options([], ["x"], "design") == ["design", "x"]

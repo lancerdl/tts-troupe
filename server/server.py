@@ -3,7 +3,7 @@ OpenAI-compatible FastAPI speech synthesis server.
 
 Model-agnostic: synthesis is delegated to model adapters discovered under
 models/ (declared via model.yaml manifests) through the ModelManager. The
-server owns routing (the reserved `custom` design target -> presets -> clone
+server owns routing (the reserved `design` target -> presets -> clone
 voices -> default voice), request validation, and audio encoding.
 """
 import asyncio
@@ -64,7 +64,7 @@ presets_by_model: Dict[str, List[str]] = {}
 # Reserved voice target for a designed (one-off) voice. When `voice` names it,
 # the {instruction} directive(s) extracted from the request input become the
 # voice-design description - the voice string itself carries no description.
-CUSTOM_VOICE = "custom"
+DESIGN_VOICE = "design"
 
 
 class SpeechRequest(BaseModel):
@@ -87,7 +87,7 @@ def _preset_voices() -> Dict[str, List[str]]:
 
 def _supports_design(model: Optional[str] = None) -> bool:
     """Whether a model - or any registered model, when omitted - supports the
-    reserved `custom` voice-design target."""
+    reserved `design` voice-design target."""
     if model_manager is None:
         return False
     names = [model] if model else list(presets_by_model)
@@ -147,7 +147,7 @@ async def lifespan(app: FastAPI):
     export_voice_list(os.path.join(REPO_ROOT, "voices.txt"), clone_names)
     for model_name, model_presets in presets_by_model.items():
         caps = model_manager.capabilities_for(model_name)
-        design = CUSTOM_VOICE if (caps is not None and caps.voice_create) else None
+        design = DESIGN_VOICE if (caps is not None and caps.voice_create) else None
         export_voice_list(
             os.path.join(REPO_ROOT, f"{model_name}_voices.txt"),
             model_voice_options(model_presets, clone_names, design),
@@ -233,9 +233,9 @@ async def list_voices(model: Optional[str] = None):
         ]
         builtin = list(presets_by_model.get(resolved, []))
         if _supports_design(resolved):
-            builtin = [CUSTOM_VOICE] + builtin
-        return {"custom": builtin, "cloned": clones}
-    designs = [{"id": CUSTOM_VOICE, "type": "design"}] if _supports_design() else []
+            builtin = [DESIGN_VOICE] + builtin
+        return {"builtin": builtin, "cloned": clones}
+    designs = [{"id": DESIGN_VOICE, "type": "design"}] if _supports_design() else []
     presets = [{"id": name, "type": "preset"} for name in available_presets]
     clones = [
         {
@@ -354,34 +354,34 @@ async def create_speech(req: SpeechRequest):
     loop = asyncio.get_event_loop()
 
     def _execute_synthesis() -> AudioResult:
-        # Reserved target "custom": the {instruction} directive(s) extracted
+        # Reserved target "design": the {instruction} directive(s) extracted
         # from the request input describe a one-off voice to design, rather
         # than naming a preset or a clone. Checked before preset/clone matching
         # so the target can never be shadowed by a same-named voice.
-        if voice_input.lower() == CUSTOM_VOICE:
+        if voice_input.lower() == DESIGN_VOICE:
             if caps is None or not caps.voice_create:
                 logger.warning(
                     "Rejecting speech request (400 Bad Request): voice %r "
                     "(voice design) is unsupported by model %r.",
-                    CUSTOM_VOICE, resolved_model)
+                    DESIGN_VOICE, resolved_model)
                 raise HTTPException(
                     status_code=400,
-                    detail=(f"Voice {CUSTOM_VOICE!r} requires voice-design "
+                    detail=(f"Voice {DESIGN_VOICE!r} requires voice-design "
                             f"support, which model {resolved_model!r} lacks."))
             if not instruct:
                 logger.warning(
                     "Rejecting speech request (400 Bad Request): voice %r "
-                    "requires a {description} directive in `input`.", CUSTOM_VOICE)
+                    "requires a {description} directive in `input`.", DESIGN_VOICE)
                 raise HTTPException(
                     status_code=400,
-                    detail=(f"Voice {CUSTOM_VOICE!r} requires a "
+                    detail=(f"Voice {DESIGN_VOICE!r} requires a "
                             "{description} directive in the request `input`."))
             logger.info("Executing designed voice synthesis: %r (model=%r)",
                         instruct, resolved_model)
             return model_manager.synthesize_create(
                 text=input_text, description=instruct, model=resolved_model)
 
-        # Priority 1: the pinned model's custom (preset) voices. Scoping the
+        # Priority 1: the pinned model's preset voices. Scoping the
         # match to one model's list also resolves cross-model name collisions.
         if caps is not None and caps.voice_preset:
             preset_match = _match_preset(voice_input, caps.presets)
@@ -409,14 +409,14 @@ async def create_speech(req: SpeechRequest):
 
         # Nothing matched. An arbitrary voice string is never silently treated
         # as a description; voice design is requested explicitly via the
-        # reserved {CUSTOM_VOICE} target plus a {{...}} directive in `input`.
-        hint = (f" Use voice={CUSTOM_VOICE!r} with a {{description}} "
+        # reserved {DESIGN_VOICE} target plus a {{...}} directive in `input`.
+        hint = (f" Use voice={DESIGN_VOICE!r} with a {{description}} "
                 "directive in `input` to design a voice."
                 if caps is not None and caps.voice_create else "")
         logger.warning(
             "Rejecting speech request (400 Bad Request): voice %r is not a preset, "
             "clone, or the %r design target of model %r.",
-            voice_input, CUSTOM_VOICE, resolved_model,
+            voice_input, DESIGN_VOICE, resolved_model,
         )
         raise HTTPException(
             status_code=400,

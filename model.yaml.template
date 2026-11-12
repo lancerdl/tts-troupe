@@ -70,7 +70,7 @@ capabilities:
     call: synthesize_preset
     # OPTIONAL. If set, the call target is adapter.get_instance(<key>) instead
     # of the adapter object (for per-checkpoint sub-objects).
-    # instance: custom
+    # instance: model
     # REQUIRED. Maps the method's keyword args to server values or literals.
     #   bare string        -> pass that server argument through
     #                         (voice_preset binds: text, voice, instruct)

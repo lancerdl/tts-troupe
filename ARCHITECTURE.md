@@ -75,6 +75,9 @@ built-in voice list is a sidecar read (`<repo>/presets.txt`, merged in
 `load_manifest`), never a model call; the `speakers` catalogue query is the
 only voice lookup that touches the model.
 
+Authoring guidance for a new model — the adapter host, the `presets.txt`
+sidecar, and the split between manifest and code — is in §12.
+
 ## 4. Wire protocol (JSON over stdio)
 
 Lockstep request/response, one outstanding command at a time — the manager
@@ -156,10 +159,10 @@ models with no native use) → `{instruction}` extraction (marker always
 removed; the value is passed as `instruct` and reaches the model only if the
 capability's `args` mapping binds it) → the empty-input silence check:
 
-1. **Design target first** — `voice` equal to the reserved `custom`
+1. **Design target first** — `voice` equal to the reserved `design`
    (case-insensitive) → `synthesize_create`, with the extracted `{instruction}`
    value as the description. Requires `voice_create` and a non-empty
-   directive; otherwise `400`.
+   directive; otherwise `400`. `custom` is not a design token.
 2. **Preset voices second** — case-insensitive match against that model's
    built-in list (`<repo>/presets.txt`) → `synthesize_preset` (the adapter
    picks its preset checkpoint).
@@ -168,6 +171,11 @@ capability's `args` mapping binds it) → the empty-input silence check:
    (the clone checkpoint; reference audio + transcript).
 4. Otherwise `400` ("voice not available for model"). An unmatched voice
    string is never read as a description.
+
+The reserved design token is `design`; `custom` is not accepted. Qwen's
+`CustomVoice` is a model-level checkpoint name for its preset voices, not a
+server token — the server calls that capability `voice_preset` / "preset
+voices".
 
 | Condition | HTTP |
 | --- | --- |
@@ -200,7 +208,7 @@ Boot order (FastAPI lifespan):
 3. **Exports to the workspace root**:
    - `voices.txt` — all cloneable archive voices (comma-separated).
    - `<model_name>_voices.txt` — one per registered model, in selection
-     order: `custom` when the model declares `voice_create`, then its built-in
+     order: `design` when the model declares `voice_create`, then its built-in
      presets (from `presets.txt`), then the clone archive (the model's full
      addressable voice space, regardless of ICL-conversion state).
 
@@ -250,7 +258,7 @@ knows nothing about caching.
 | Endpoint | Purpose |
 | --- | --- |
 | `POST /v1/audio/speech` | Synthesis (OpenAI-compatible). `model` required. |
-| `GET /v1/voices` | Ordered flat list (design target, presets, clones) + `presets_by_model` + `design_by_model`; `?model=` → `{custom, cloned}` with `custom` listing the design target first when supported. |
+| `GET /v1/voices` | Ordered flat list (design target, presets, clones) + `presets_by_model` + `design_by_model`; `?model=` → `{builtin, cloned}` with `builtin` listing the design target first when supported. |
 | `GET /v1/speakers` | Full built-in speaker catalogue; `?model=` scopes to one adapter (only that checkpoint may load). |
 | `GET /health` | CUDA status, presets, cloned voices, per-model voice-cache status. |
 | `GET /` | Self-contained test console (static page). |
@@ -293,7 +301,7 @@ knows nothing about caching.
   is stripped only where the manifest sets `strip_brackets`. `{...}` is a
   delivery instruction: always extracted, always removed from the text, and
   bound only if the dispatched capability's `args` mapping names `instruct`.
-  When `voice` is the reserved `custom` target, that same extracted value is
+  When `voice` is the reserved `design` target, that same extracted value is
   used as the voice-design description instead of delivery steering.
   Never route instructions through `[..]`; that silently deletes native
   content on models that speak it.
@@ -319,3 +327,179 @@ knows nothing about caching.
   `pyproject.toml`, no `setup.py` — so `_import_module_from_dir` adds its
   directory to `sys.path` at spawn time, resolved from the `--repo` argument
   the worker is started with. Either shape is valid for the next model.
+
+## 12. Adapter authoring contract
+
+A model integrates by (a) being a git repo that owns its own dependencies and
+setup — either an installable package (`pyproject.toml` + setup script) or a
+directory of modules plus `requirements.txt` — (b) being given a `model.yaml` at
+its root (which **you** author) declaring its adapter factory and capability
+mappings plus a `runtime:` block, (c) if it has built-in preset voices, running
+`sync_presets.bat` (or `tts-troupe-sync-presets`) to write `presets.txt`, and
+(d) being added to the `models:` list in `server/config.yaml` — zero server
+changes. Models with conflicting dependencies coexist because each runs in its
+own interpreter.
+
+The annotated [`model.yaml.template`](model.yaml.template) at the repo root is
+the full reference — every key with its required/optional status, default, and
+the arg/result spec forms (`{const:}`, `{config:}`, `{dict:}`; result
+`{index:}` / `{attr:}`). Copy it to `model.yaml` in the model repo and edit.
+
+### Built-in voices (`presets.txt`)
+
+A model's built-in voice list is **not** a manifest key. It lives in a
+comma-separated sidecar, `models/<repo>/presets.txt`:
+
+```
+Vivian,Serena,Uncle_Fu,Dylan,Eric,Ryan,Aiden,Ono_Anna,Sohee
+```
+
+The server reads it at registration (a file read — no model code, no checkpoint
+load). Generate it by asking the model, which runs `supported_speakers()` in the
+model's own venv (this may load a checkpoint, so it is deliberate and one-off):
+
+```
+tts-troupe-sync-presets              # every repo under models/
+tts-troupe-sync-presets ming qwen3   # repo dir, manifest name, or alias
+```
+
+Or run `sync_presets.bat` at the repo root, a thin launcher for the same
+command. This is a manual, one-off operation: run it while the server is
+stopped, then restart the server so the new sidecar is read at registration.
+It is never invoked by server startup.
+
+You can also write the file by hand. Without it the model simply has no preset
+voices: preset names fall through to the clone/design checks and then `400`.
+
+### Authoring `adapter.py`
+
+The companion file is the model's **lifecycle**, not its capabilities. The
+mapper itself lives in `framework/` (`MappedAdapter`); `adapter.py` is the model
+**host** — the object the mapping's calls target, plus construction and
+residency. Write it only for what `model.yaml` cannot express:
+
+- **the factory class** named by `setup.factory`, constructed as
+  `factory(config=<setup.config_file dict>, model_dir=<Path>)`;
+- **`get_instance(key)`** — only when a capability names an `instance:`;
+- optionally `is_loaded`, `age_caches`, `age_checkpoints`, and
+  `supported_speakers` (must return a **list** — the worker wraps it under
+  `{"speakers": …}`).
+
+Everything else belongs in the manifest: task/argument shaping, structured
+kwargs (`controls: {dict: {emotion: instruct}}`), per-instruction variants, and
+result extraction. Reach for a native `synthesize_<preset|clone|create>` method
+only when the grammar genuinely cannot express the call — runtime branching
+beyond `instruct` presence, multi-step call chains, argument coercions, or a
+private prompt cache.
+
+[`adapter.py.template`](adapter.py.template) at the repo root is the skeleton to
+copy. The two worked integrations show the split: `Ming-3.0-tts` is entirely
+`model.yaml` plus a lifecycle-only adapter (its `TTS`, `EMOTION`, `IP` and
+`FREEFORM` tasks are all mapped), while `faster-qwen3-tts` keeps hooks for its
+three checkpoints and prompt cache.
+
+## 13. Configuration & environment variables
+
+All settings live in **`server/config.yaml`**, auto-created from
+**`server/config.yaml.example`** on first run and gitignored. Precedence:
+
+```
+CLI arguments  >  environment variables  >  server/config.yaml  >  built-in defaults
+```
+
+- `server/config.yaml.example` — committed, portable template.
+- `server/config.yaml` — the local, machine-specific file; never tracked by git.
+- If `server/config.yaml` is missing, it is recreated from the example on next
+  startup.
+
+The committed [`server/config.yaml.example`](server/config.yaml.example) is the
+full reference, with every key documented inline. The settings that usually need
+attention are `voices.voices_dir`, `models.list`, the worker wire deadlines
+(`server.synthesis_timeout_seconds`, `server.cold_start_timeout_seconds`,
+`server.recovery_cooldown_seconds`), and the aging thresholds
+(`memory_management.model_idle_timeout_minutes`,
+`memory_management.prompt_cache_ttl_minutes`).
+
+Every setting can also be supplied as an environment variable — handy for
+containers, CI, or a one-off run. You do **not** need them when you have a
+proper `server/config.yaml`; when both are present the environment variables win
+(and command-line flags win over both).
+
+- `TTS_CONFIG` — path to an alternate `config.yaml`
+- `TTS_HOST` / `TTS_PORT` — bind address and port
+- `TTS_MODELS` — comma-separated model repo names under `models/`
+- `TTS_DEVICE` / `TTS_DTYPE` — torch device and precision hints
+- `TTS_RESPONSE_FORMAT` — default output format when the client omits one
+- `TTS_STRIP_TAGS` — `true`/`false` (or `1`/`0`) to control `<tag>` stripping
+- `TTS_VOICES_DIR` — reference-audio folder
+- `TTS_MODEL_IDLE_TIMEOUT` / `TTS_PROMPT_TTL` — aging thresholds (minutes)
+- `TTS_CUDA_CHECK_COOLDOWN` / `TTS_CUDA_HEALTH_TIMEOUT` — CUDA probe timing
+  (seconds)
+- `TTS_SYNTHESIS_TIMEOUT` / `TTS_COLD_START_TIMEOUT` / `TTS_RECOVERY_COOLDOWN` —
+  worker wire deadlines (seconds)
+
+## 14. Logging markers
+
+- **Console**: all logs are printed to stdout; this is the live view of requests
+  and memory events.
+- **Log files**: the same stream is routed per component to
+  `logs/<YYYY-MM-DD>/<component>.log`, with the date computed per record so
+  midnight rollovers are correct. Worker stderr relayed through
+  `worker.<model>` loggers lands in the model's own component file.
+
+Notable markers:
+
+| Marker | Meaning |
+| --- | --- |
+| `[MEMORY] + LOADED model into VRAM` | A model was brought into GPU memory on first use. |
+| `[MEMORY] - UNLOADING model from VRAM` | A model is being freed (idle timeout or shutdown). |
+| `[MEMORY] - UNLOADED model from VRAM` | VRAM freed and CUDA cache cleared. |
+| `[MEMORY] + ADDED voice clone prompt` | A cloned voice's prompt was extracted and cached. |
+| `[MEMORY] - REMOVED voice clone prompt` | An expired voice prompt was evicted (TTL). |
+| `[MEMORY] - CLEARED all ... voice clone prompt(s)` | Prompt cache cleared (startup/shutdown). |
+| `Executing ... synthesis` (adapter-defined) | Each model adapter logs its own routing decisions; the exact strings come from the adapter (the `faster-qwen3-tts` example logs `Executing Base voice clone synthesis`, `Executing CustomVoice preset synthesis`, and `attempting VoiceDesign synthesis`). |
+
+## 15. Potential enhancements
+
+### Operational improvements
+- **Dependency validation**: startup checks for required dependencies (FFmpeg,
+  CUDA, PyTorch version).
+- **Configuration validation**: validate `server/config.yaml` structure and required
+  fields at startup.
+- **Hot-reload support**: configuration reload without a server restart.
+- **FFmpeg discovery**: automatic FFmpeg path discovery with fallback options.
+
+### Security features
+- **Authentication**: basic auth or API key support for production deployments.
+- **Rate limiting**: request rate limiting to prevent abuse.
+- **CORS configuration**: configurable CORS settings for web applications.
+
+### Monitoring & diagnostics
+- **Health checks**: a more detailed health endpoint with model loading status.
+- **Performance metrics**: request latency, memory usage, and GPU utilization.
+- **Prometheus integration**: export metrics for monitoring systems.
+
+### Deployment features
+- **Docker support**: containerized deployment with optimized base images.
+- **Systemd service**: production service configuration for Linux systems.
+- **Windows service**: native Windows service installation.
+
+## 16. Code quality notes
+
+### Architectural strengths
+- **Separation of concerns**: clear separation between server, manager, and
+  worker components.
+- **Thread safety**: proper use of `threading.Lock` for shared resource access.
+- **Resource management**: efficient GPU memory management with idle-timeout
+  unloading.
+- **Error handling**: comprehensive error handling with appropriate logging.
+- **Performance optimization**: model caching and prompt caching for repeated
+  requests.
+
+### Code quality indicators
+- **Type hints**: extensive use of Python type hints throughout the codebase.
+- **Logging**: well-structured logging with appropriate log levels.
+- **Documentation**: comprehensive docstrings and inline comments.
+- **Modular design**: clean module separation with single responsibility.
+- **Configuration hierarchy**: sensible precedence (CLI > env vars > config file
+  > defaults).

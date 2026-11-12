@@ -42,7 +42,7 @@
     <button id="fetchvoices" title="Fetch the voice list for the selected model (design target, built-in voices, then cloned)">Fetch voices</button>
     <button id="catalogue" title="Loads the owning checkpoint on first call">Load full catalogue</button>
   </div>
-  <textarea id="text" placeholder="Text to synthesize... with the 'custom' voice, describe it in {curly braces}"></textarea>
+  <textarea id="text" placeholder="Text to synthesize... with the 'design' voice, describe it in {curly braces}"></textarea>
   <div class="row">
     <button class="primary" id="go">Synthesize</button>
     <span id="status" class="muted"></span>
@@ -75,9 +75,9 @@ function rebuildVoicePicker() {
   // The server lists the reserved design target first when the model supports
   // it; render it in its own group, ahead of the model's built-in voices. A
   // loaded full catalogue replaces the built-in list but keeps the target.
-  const supportsDesign = seeded[0] === 'custom';
+  const supportsDesign = seeded[0] === 'design';
   const cached = catalogueCache[model];
-  const designed = supportsDesign ? ['custom'] : [];
+  const designed = supportsDesign ? ['design'] : [];
   const builtin = cached ? cached : (supportsDesign ? seeded.slice(1) : seeded);
   const sel = $('voice');
   sel.innerHTML = '';
@@ -115,7 +115,7 @@ async function loadVoices() {
     const designByModel = data.design_by_model || {};
     const presetsByModel = {};
     for (const [m, presets] of Object.entries(data.presets_by_model || {})) {
-      presetsByModel[m] = (designByModel[m] ? ['custom'] : []).concat(presets);
+      presetsByModel[m] = (designByModel[m] ? ['design'] : []).concat(presets);
     }
     voiceData.presetsByModel = presetsByModel;
     voiceData.clones = (data.voices || []).filter(v => v.type === 'clone');
@@ -141,11 +141,11 @@ async function fetchVoices() {
       throw new Error(`HTTP ${r.status}: ${detail}`);
     }
     const data = await r.json();
-    voiceData.presetsByModel[model] = data.custom || [];
+    voiceData.presetsByModel[model] = data.builtin || [];
     voiceData.clones = data.cloned || [];
     rebuildVoicePicker();
     $('status').textContent =
-      `voices for ${model}: ${(data.custom || []).length} built-in, ${(data.cloned || []).length} clonable`;
+      `voices for ${model}: ${(data.builtin || []).length} built-in, ${(data.cloned || []).length} clonable`;
   } catch (e) {
     $('status').textContent = 'voice fetch failed: ' + e;
   } finally {
