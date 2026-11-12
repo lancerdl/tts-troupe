@@ -2,13 +2,15 @@
 Voice library scanning and export for tts-troupe.
 
 Scans the configured voices directory for reference-audio clone voices
-(.wav + optional transcript) and exports the combined voice list (clone
-voices + manifest-declared preset voices) to voices.txt for SillyTavern UI.
+(.wav + optional transcript) and exports the selectable voice lists for
+SillyTavern UI: ``voices.txt`` (the clone archive) and one
+``<model_name>_voices.txt`` per model (reserved design target when the model
+supports it, then its built-in preset voices, then the clone archive).
 """
 import glob
 import logging
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 logger = logging.getLogger("tts_troupe.voice_library")
 
@@ -51,12 +53,27 @@ def scan_voice_library(voices_dir: str) -> Dict[str, Dict[str, str]]:
     return voices
 
 
+def model_voice_options(presets: List[str], clones: List[str],
+                        design_target: Optional[str] = None) -> List[str]:
+    """Ordered selectable voices for one model.
+
+    The reserved design target (when the model supports voice design) comes
+    first, then the model's built-in preset voices, then the clone archive -
+    the order a client presents them in.
+    """
+    ordered = [design_target] if design_target else []
+    ordered.extend(presets)
+    ordered.extend(clones)
+    return ordered
+
+
 def export_voice_list(path: str, voice_names: List[str]) -> None:
     """Write a clean comma-separated voice list to an explicit path.
 
     Used for the server-root exports: ``voices.txt`` (all cloneable voices
     in the configured archive) and ``<model_name>_voices.txt`` (one per
-    model: its preset voices plus the clone archive)."""
+    model: its design target when supported, its preset voices, then the
+    clone archive)."""
     try:
         directory = os.path.dirname(path)
         if directory:

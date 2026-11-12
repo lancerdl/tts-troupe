@@ -186,7 +186,7 @@ def test_version_bump_new_key(hook_env, caplog):
 
     manifest_path = hook_env.repo / "model.yaml"
     manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-    manifest["capabilities"]["voice_clone"]["clone_prompt"]["versions"]["format"] = "2"
+    manifest["capabilities"]["voice_clone"]["prompt_cache"]["versions"]["format"] = "2"
     manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
 
     hook_env.proxy._kill()  # the worker re-reads the manifest at spawn

@@ -102,7 +102,7 @@ serializes per model, so there is no multiplexing.
 | --- | --- |
 | `ping` | Liveness + CUDA health probe executed inside the worker (tiered: zero-cost when no CUDA context exists; alloc+sync when one does). Returns `cuda_ok`. |
 | `synthesize_default` | Preset-voice synthesis (text, voice, instruct). |
-| `synthesize_clone` | Reference cloning (text, ABSOLUTE ref path, ref_text). The worker opens the file itself; audio bytes never cross the pipe. With `clone_prompt`, the harness intercepts: extract → cache → synthesize-with-prompt. |
+| `synthesize_clone` | Reference cloning (text, ABSOLUTE ref path, ref_text, instruct). The worker opens the file itself; audio bytes never cross the pipe. With `prompt_cache`, the harness intercepts: extract → cache → synthesize-with-prompt. |
 | `synthesize_create` | Voice-design synthesis (text, description). |
 | `speakers` | Complete built-in speaker catalogue from the loaded model (may trigger a checkpoint load on first call). |
 | `cache_info` | Voice-cache visibility: memory entries, persisted files, disk bytes. Accurate even while unloaded (disk view). |
@@ -155,16 +155,18 @@ models with no native use) → `{instruction}` extraction (marker always
 removed; the value is passed as `instruct` and reaches the model only if the
 capability's `args` mapping binds it) → the empty-input silence check:
 
-1. **Custom voices first** — case-insensitive match against that model's
+1. **Design target first** — `voice` equal to the reserved `custom`
+   (case-insensitive) → `synthesize_create`, with the extracted `{instruction}`
+   value as the description. Requires `voice_create` and a non-empty
+   directive; otherwise `400`.
+2. **Preset voices second** — case-insensitive match against that model's
    manifest `presets` → `synthesize_default` (the adapter picks its
    preset checkpoint).
-2. **Clone voices second** — case-insensitive match against the voice archive
+3. **Clone voices third** — case-insensitive match against the voice archive
    stems, only if the model supports `voice_clone` → `synthesize_clone`
    (the clone checkpoint; reference audio + transcript).
-3. **Persona description** — only if the model supports `voice_create` →
-   `synthesize_create` (the whole voice string becomes a natural-language
-   voice design).
-4. Otherwise `400` ("voice not available for model").
+4. Otherwise `400` ("voice not available for model"). An unmatched voice
+   string is never read as a description.
 
 | Condition | HTTP |
 | --- | --- |
@@ -196,9 +198,10 @@ Boot order (FastAPI lifespan):
    as transcripts.
 3. **Exports to the workspace root**:
    - `voices.txt` — all cloneable archive voices (comma-separated).
-   - `<model_name>_voices.txt` — one per registered model: its manifest
-     presets plus the clone archive (the model's full addressable voice space,
-     regardless of ICL-conversion state).
+   - `<model_name>_voices.txt` — one per registered model, in selection
+     order: `custom` when the model declares `voice_create`, then its manifest
+     presets, then the clone archive (the model's full addressable voice
+     space, regardless of ICL-conversion state).
 
 The scan result feeds request routing (clone voices) and the console's voice
 picker. The scan runs once at startup; new clips require a restart (the
@@ -208,7 +211,7 @@ apply live).
 ## 8. Voice cache ownership (ICL prompts)
 
 Cloned-voice prompts are **harness-owned** when a manifest declares
-`clone_prompt`: on a clone miss, `model_worker` calls the adapter's
+`prompt_cache`: on a clone miss, `model_worker` calls the adapter's
 `extract` hook, stores the returned tensors via `framework/voice_cache.py`,
 and thereafter serves clones through the `synthesize` hook with the cached
 prompt (`ref_audio`/`ref_text` are still passed through). The repo adapter
@@ -246,7 +249,7 @@ knows nothing about caching.
 | Endpoint | Purpose |
 | --- | --- |
 | `POST /v1/audio/speech` | Synthesis (OpenAI-compatible). `model` required. |
-| `GET /v1/voices` | Flat voice list + `presets_by_model`; `?model=` → `{custom, cloned}` for one model. |
+| `GET /v1/voices` | Ordered flat list (design target, presets, clones) + `presets_by_model` + `design_by_model`; `?model=` → `{custom, cloned}` with `custom` listing the design target first when supported. |
 | `GET /v1/speakers` | Full built-in speaker catalogue; `?model=` scopes to one adapter (only that checkpoint may load). |
 | `GET /health` | CUDA status, presets, cloned voices, per-model voice-cache status. |
 | `GET /` | Self-contained test console (static page). |
@@ -289,8 +292,16 @@ knows nothing about caching.
   is stripped only where the manifest sets `strip_brackets`. `{...}` is a
   delivery instruction: always extracted, always removed from the text, and
   bound only if the dispatched capability's `args` mapping names `instruct`.
+  When `voice` is the reserved `custom` target, that same extracted value is
+  used as the voice-design description instead of delivery steering.
   Never route instructions through `[..]`; that silently deletes native
   content on models that speak it.
+- **On the clone path the instruction is resolved through `instruct_map`.**
+  A declared map translates client terms to model-native labels (`{sad}` →
+  悲伤); a miss is dropped (or passed raw, per `instruct_on_miss`), so an
+  unrecognized directive degrades to a plain clone rather than a bad control.
+  Without `accepts_instruct`, the instruction is discarded and logged, exactly
+  as for any other capability.
 - **An unbound instruction is logged, not raised.** `MappedAdapter._dispatch`
   emits an INFO line naming the model, the capability, and the discarded
   value when a non-empty `instruct` arrives at a capability that does not

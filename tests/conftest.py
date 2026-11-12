@@ -56,8 +56,10 @@ ADAPTER_MODULE = textwrap.dedent(
             self.calls.append(("gen_create", text, description))
             return (("payload", np.array([0.1, 0.2, 0.3])), 8000)
 
-        def synthesize_clone(self, text, ref_audio_path, ref_text):
-            self.calls.append(("synthesize_clone", text, ref_audio_path, ref_text))
+        def synthesize_clone(self, text, ref_audio_path, ref_text,
+                             instruct=None):
+            self.calls.append(
+                ("synthesize_clone", text, ref_audio_path, ref_text, instruct))
             return ("clone-audio", 16000)
 
 
@@ -90,7 +92,7 @@ FAKE_MANIFEST = {
             "args": {"text": "text", "description": "description"},
             "result": {"audio": {"index": [0, 1]}, "sample_rate": {"index": 1}},
         },
-        "voice_clone": {"implementation": "native"},
+        "voice_clone": {"implementation": "native", "accepts_instruct": True},
     },
 }
 
@@ -318,7 +320,7 @@ WIRE_HOOK_MANIFEST = {
         },
         "voice_clone": {
             "implementation": "native",
-            "clone_prompt": {
+            "prompt_cache": {
                 "extract": "extract_clone_prompt",
                 "synthesize": "synthesize_with_prompt",
                 "checkpoint": "base",
@@ -337,7 +339,7 @@ def make_wire_hook_repo(models_dir: Path, name: str = "wire-hook-tts",
     runtime = dict(manifest["runtime"])
     runtime["python"] = runtime_python or ""
     manifest["runtime"] = runtime
-    manifest["capabilities"]["voice_clone"]["clone_prompt"]["versions"]["format"] = format_version
+    manifest["capabilities"]["voice_clone"]["prompt_cache"]["versions"]["format"] = format_version
     model_dir = models_dir / name
     model_dir.mkdir(parents=True, exist_ok=True)
     (model_dir / "adapter_module.py").write_text(WIRE_HOOK_ADAPTER_MODULE,

@@ -1,5 +1,9 @@
 """Voice-library scan and export tests (transcript preference + exports)."""
-from server.voice_library import export_voice_list, scan_voice_library
+from server.voice_library import (
+    export_voice_list,
+    model_voice_options,
+    scan_voice_library,
+)
 
 
 def _write(path, content=""):
@@ -52,3 +56,16 @@ def test_export_voice_list_per_model_filename(tmp_path):
     out = tmp_path / "some-model_voices.txt"
     export_voice_list(str(out), ["alloy", "X"])
     assert out.read_text(encoding="utf-8") == "alloy,X"
+
+
+def test_model_voice_options_design_target_first():
+    assert model_voice_options(["Vivian", "Ryan"], ["x"], "custom") == [
+        "custom", "Vivian", "Ryan", "x"]
+
+
+def test_model_voice_options_without_design_support():
+    assert model_voice_options(["Vivian"], ["x"]) == ["Vivian", "x"]
+
+
+def test_model_voice_options_only_design_target():
+    assert model_voice_options([], ["x"], "custom") == ["custom", "x"]

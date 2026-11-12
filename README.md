@@ -89,7 +89,7 @@ The annotated [`model.yaml.template`](model.yaml.template) at the repo root is t
 - **OpenAI-compatible endpoint**: `POST /v1/audio/speech` with `mp3`, `wav`, and `pcm` output.
 - **Manual test console**: open the server root in a browser — `http://127.0.0.1:8000/` by default (the `server.host`/`server.port` from `config.yaml`). It serves a self-contained web page for manual testing — voice picker, synthesis with in-browser playback, error surfacing (501/503), and a live cache-status panel.
 - **Pluggable model adapters**: synthesis is delegated to models declared under `models/` via `model.yaml` manifests — adding a new TTS model requires zero server changes.
-- **Required, alias-aware `model` selection**: requests name a model by its canonical name or a declared alias; voices resolve within that model — custom presets first, then clone archive, then persona description.
+- **Required, alias-aware `model` selection**: requests name a model by its canonical name or a declared alias; voices resolve within that model — the reserved `custom` design target first, then custom presets, then the clone archive.
 - **Text conditioning**: `<tag>` markup is stripped globally (`strip_tags`); `{instruction}` directives are extracted and passed as delivery steering where the model accepts it; `[tag]` is left alone for models that speak it natively (e.g. `[Sigh]`-style vocal tags) and stripped per model via the manifest `strip_brackets` flag otherwise.
 - **Real-time CUDA-graph inference** with streaming-capable generation.
 - **Lazy VRAM loading**: models load into GPU memory on first use, not at startup.
@@ -134,8 +134,8 @@ Incoming request { model, voice, input, response_format }
                                │ NO
                                ▼
    ┌─────────────────────────────────────────────────────────┐
-   │ 3. Fallback: treat voice as a persona description      │
-   │    (e.g. "a warm elderly scholar", "soft whispering")   │
+   │ 3. voice is the reserved design target "custom"?        │
+   │    (the {description} directive in `input` drives it)   │
    └───────────────────────────┬─────────────────────────────┘
                                │ YES → model's voice-design capability
                                │ NO / unsupported → 400
@@ -157,12 +157,21 @@ Incoming request { model, voice, input, response_format }
 - The extracted speaker prompt is cached on first request (memory mirror +
   persisted `.pt`) and reused for subsequent requests of the same voice
   (subject to the prompt TTL).
+- A `{...}` directive in the input is resolved against the model's
+  `instruct_map`: on a model that declares one (Ming), `{sad}` on a cloned
+  voice selects its native emotion control, and a directive that maps to no
+  label falls back to a plain clone.
 
-**Voice Design**
+**Voice Design** (the reserved `custom` target)
 
-- Any `voice` string that matches neither a preset nor a clone stem is
-  treated as a natural-language voice description — for models that support
-  `voice_create`; others reject it with `400`.
+- Set `voice` to `custom` and put the voice description in a `{...}` directive
+  in `input` (e.g. `{"voice": "custom", "input": "{a warm elderly scholar} Good morning."}`).
+  The directive is extracted from the text and passed as the design
+  description — for models that support `voice_create`. `custom` with no
+  `{...}` present, or a model without voice design, is rejected with `400`.
+- Any other `voice` string that matches neither a preset nor a clone stem is
+  rejected with `400`: an unmatched voice string is never silently read as a
+  description.
 - This gives you an endless supply of one-off voices without touching the voice library.
 
 ### Memory Lifecycle
@@ -312,7 +321,7 @@ the model's own `config.yaml` defaults already use valid combinations:
 | --- | --- | --- |
 | `Base` (voice clone) | ✅ | ✅ |
 | `CustomVoice` (presets) | ✅ | ✅ |
-| `VoiceDesign` (persona) | ❌ | ✅ |
+| `VoiceDesign` (voice design) | ❌ | ✅ |
 
 > ⚠️ There is **no** `0.6B-VoiceDesign` release. If you see a 401 / "not a valid model identifier" error, check that `design_model` points to the 1.7B variant.
 
@@ -386,7 +395,7 @@ or double-click `transcribe_voices.bat`.
 After every startup the server writes two comma-separated lists next to the server code (workspace root):
 
 - `voices.txt` — all cloneable voices found in the configured archive.
-- `<model_name>_voices.txt` — one per registered model: that model's preset voices plus the clone archive (the model's full addressable voice space, regardless of whether prompts have been converted into ICL tensors yet).
+- `<model_name>_voices.txt` — one per registered model, in selection order: `custom` when the model supports voice design, then its preset voices, then the clone archive (the model's full addressable voice space, regardless of whether prompts have been converted into ICL tensors yet).
 
 Paste `<model_name>_voices.txt` into SillyTavern's **Available Voices** field.
 
@@ -400,8 +409,8 @@ OpenAI-compatible request body:
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `input` | string | ✅ | Text to synthesize. Inline tags allowed: `[whisper]`, `[tone: angry]`, `{sad}`, `(sigh)`. |
-| `voice` | string | ✅ | Resolved within the selected model: its custom (preset) voices first, then clone stems, then persona-description voice creation. |
+| `input` | string | ✅ | Text to synthesize. Inline tags allowed: `[whisper]`, `[tone: angry]`, `{sad}`, `(sigh)`. A `{...}` directive drives voice design when `voice: "custom"`, and on a cloned voice selects the model's control where its `instruct_map` declares one. |
+| `voice` | string | ✅ | Resolved within the selected model: the reserved `custom` design target first, then its custom (preset) voices, then clone stems. Anything else is rejected with `400`. |
 | `model` | string | ✅ | Must match a registered model name or a declared alias. Unknown models are rejected with `400`. |
 | `response_format` | string | ❌ | `mp3`, `wav`, or `pcm`. When omitted, falls back to `server.response_format` from `config.yaml` (default `mp3`). |
 | `speed` | float | ❌ | Accepted for compatibility (not yet applied). |

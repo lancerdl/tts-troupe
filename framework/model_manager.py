@@ -250,7 +250,7 @@ class ModelManager:
         return out
 
     def synthesize_clone(self, text: str, ref_audio_path: str,
-                         ref_text: str = "",
+                         ref_text: str = "", instruct: Optional[str] = None,
                          model: Optional[str] = None) -> AudioResult:
         """Synthesize a voice clone from a reference audio file.
 
@@ -259,7 +259,7 @@ class ModelManager:
         name = self._pick("voice_clone", model)
         return self._synthesize(name, "synthesize_clone",
                                 text=text, ref_audio_path=ref_audio_path,
-                                ref_text=ref_text)
+                                ref_text=ref_text, instruct=instruct)
 
     def synthesize_default(self, voice: str, text: str,
                            instruct: Optional[str] = None,

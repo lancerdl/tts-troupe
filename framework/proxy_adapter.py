@@ -228,11 +228,13 @@ class ProxyAdapter:
                                  "instruct": instruct})
 
     def synthesize_clone(self, text: str, ref_audio_path: str,
-                         ref_text: str = "") -> AudioResult:
+                         ref_text: str = "",
+                         instruct: Optional[str] = None) -> AudioResult:
         return self._synthesize("synthesize_clone",
                                 {"text": text,
                                  "ref_audio_path": ref_audio_path,
-                                 "ref_text": ref_text})
+                                 "ref_text": ref_text,
+                                 "instruct": instruct})
 
     def synthesize_create(self, text: str, description: str) -> AudioResult:
         return self._synthesize("synthesize_create",

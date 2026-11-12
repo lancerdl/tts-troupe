@@ -87,19 +87,29 @@ capabilities:
   # --- reference-audio cloning ----------------------------------------------
   voice_clone:
     # NATIVE form: the adapter object implements
-    # synthesize_clone(text, ref_audio_path, ref_text) itself.
+    # synthesize_clone(text, ref_audio_path, ref_text, instruct) itself.
     implementation: native
+    # OPTIONAL. Consume an extracted {...} instruction on the clone path.
+    # `accepts_instruct: true` passes the instruction to synthesize_clone.
+    # `instruct_map` translates client terms to model labels (e.g. {sad: 悲伤});
+    # `instruct_on_miss` decides what a non-matching value becomes - `drop`
+    # (the default once a map exists) or `raw`.
+    # accepts_instruct: true
+    # instruct_on_miss: drop
+    # instruct_map: { happy: 高兴, sad: 悲伤 }
+    #
     # OPTIONAL. Harness-owned ICL prompt caching: name the adapter methods that
     # extract and reuse a clone prompt, the checkpoint key, and cache versions
     # (bump a version to invalidate cached prompts).
-    # clone_prompt:
+    # prompt_cache:
     #   extract: extract_clone_prompt
     #   synthesize: synthesize_with_prompt
     #   checkpoint: base
     #   versions: {adapter: "1", format: "1"}
     #
     # DECLARATIVE alternative (drop `implementation` and use call/args/result):
-    # bindable server args for voice_clone are text, ref_audio_path, ref_text.
+    # bindable server args for voice_clone are text, ref_audio_path, ref_text,
+    # and instruct (an args entry naming `instruct` also opens the channel).
 
   # --- voice design ---------------------------------------------------------
   voice_create:

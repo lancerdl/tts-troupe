@@ -39,10 +39,10 @@
       <option value="wav" selected>wav</option>
       <option value="mp3">mp3</option>
     </select>
-    <button id="fetchvoices" title="Fetch the voice list for the selected model (custom first, cloned second)">Fetch voices</button>
+    <button id="fetchvoices" title="Fetch the voice list for the selected model (design target, built-in voices, then cloned)">Fetch voices</button>
     <button id="catalogue" title="Loads the owning checkpoint on first call">Load full catalogue</button>
   </div>
-  <textarea id="text" placeholder="Text to synthesize..."></textarea>
+  <textarea id="text" placeholder="Text to synthesize... with the 'custom' voice, describe it in {curly braces}"></textarea>
   <div class="row">
     <button class="primary" id="go">Synthesize</button>
     <span id="status" class="muted"></span>
@@ -71,12 +71,29 @@ const catalogueCache = {};   // model -> full catalogue (loaded on demand)
 
 function rebuildVoicePicker() {
   const model = $('model').value;
-  const custom = catalogueCache[model] || (voiceData.presetsByModel[model] || []);
+  const seeded = voiceData.presetsByModel[model] || [];
+  // The server lists the reserved design target first when the model supports
+  // it; render it in its own group, ahead of the model's built-in voices. A
+  // loaded full catalogue replaces the built-in list but keeps the target.
+  const supportsDesign = seeded[0] === 'custom';
+  const cached = catalogueCache[model];
+  const designed = supportsDesign ? ['custom'] : [];
+  const builtin = cached ? cached : (supportsDesign ? seeded.slice(1) : seeded);
   const sel = $('voice');
   sel.innerHTML = '';
+  if (designed.length) {
+    const gd = document.createElement('optgroup');
+    gd.label = 'Designed voice';
+    for (const v of designed) {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = `${v} - design from {...} in the text`;
+      gd.appendChild(o);
+    }
+    sel.appendChild(gd);
+  }
   const gc = document.createElement('optgroup');
-  gc.label = `Custom voices - ${model}`;
-  for (const v of custom) {
+  gc.label = `Built-in voices - ${model}`;
+  for (const v of builtin) {
     const o = document.createElement('option');
     o.value = v; o.textContent = v;
     gc.appendChild(o);
@@ -95,11 +112,16 @@ function rebuildVoicePicker() {
 async function loadVoices() {
   try {
     const data = await (await fetch('/v1/voices')).json();
-    voiceData.presetsByModel = data.presets_by_model || {};
+    const designByModel = data.design_by_model || {};
+    const presetsByModel = {};
+    for (const [m, presets] of Object.entries(data.presets_by_model || {})) {
+      presetsByModel[m] = (designByModel[m] ? ['custom'] : []).concat(presets);
+    }
+    voiceData.presetsByModel = presetsByModel;
     voiceData.clones = (data.voices || []).filter(v => v.type === 'clone');
     const ms = $('model');
     ms.innerHTML = '';
-    for (const m of Object.keys(voiceData.presetsByModel)) {
+    for (const m of Object.keys(presetsByModel)) {
       const o = document.createElement('option');
       o.value = m; o.textContent = m;
       ms.appendChild(o);
@@ -123,7 +145,7 @@ async function fetchVoices() {
     voiceData.clones = data.cloned || [];
     rebuildVoicePicker();
     $('status').textContent =
-      `voices for ${model}: ${(data.custom || []).length} custom, ${(data.cloned || []).length} clonable`;
+      `voices for ${model}: ${(data.custom || []).length} built-in, ${(data.cloned || []).length} clonable`;
   } catch (e) {
     $('status').textContent = 'voice fetch failed: ' + e;
   } finally {

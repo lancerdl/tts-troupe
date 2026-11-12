@@ -164,6 +164,40 @@ def _extract_result(result_spec: Dict[str, Any], raw: Any) -> AudioResult:
     return AudioResult(audio=audio, sample_rate=int(sr))
 
 
+def resolve_instruct(block: Dict[str, Any],
+                     instruct: Optional[str]) -> Optional[str]:
+    """Map an extracted ``{...}`` instruction onto a model-native label.
+
+    Manifest-driven and model-agnostic: ``instruct_map`` translates
+    client-facing terms to the labels a model expects (e.g. Ming's ``sad`` ->
+    悲伤), and ``instruct_on_miss`` decides what a non-matching value becomes -
+    ``drop`` (the default once a map exists) or ``raw``.
+
+    Returns ``None`` for a blank instruction or a dropped miss, otherwise the
+    resolved value. Whether the capability has an instruct channel at all is
+    the caller's decision (see ``MappedAdapter.accepts_instruct``).
+    """
+    text = "" if instruct is None else str(instruct).strip()
+    if not text:
+        return None
+    mapping = {str(key).strip().lower(): value
+               for key, value in (block.get("instruct_map") or {}).items()}
+    if not mapping:
+        return text
+    # The server joins multiple directives with ", "; the first hit wins, and
+    # a value the client already sent as a label is accepted as-is.
+    for part in text.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        if token.lower() in mapping:
+            return mapping[token.lower()]
+        if token in mapping.values():
+            return token
+    on_miss = str(block.get("instruct_on_miss", "drop")).strip().lower()
+    return text if on_miss == "raw" else None
+
+
 def capabilities_from_manifest(manifest: Dict[str, Any]) -> ModelCapabilities:
     """Derive ModelCapabilities purely from a model.yaml manifest.
 
@@ -226,6 +260,43 @@ class MappedAdapter:
     def _build_capabilities(self) -> ModelCapabilities:
         return capabilities_from_manifest(self.manifest)
 
+    def _capability_block(self, cap_type: str) -> Dict[str, Any]:
+        return (self.manifest.get("capabilities", {}) or {}).get(cap_type) or {}
+
+    def accepts_instruct(self, cap_type: str) -> bool:
+        """Whether a capability has an instruct channel.
+
+        Native form: the block sets ``accepts_instruct: true``. Declarative
+        form: an ``args`` entry resolves to the server's ``instruct``.
+        """
+        block = self._capability_block(cap_type)
+        if block.get("accepts_instruct"):
+            return True
+        return any(isinstance(spec, str) and spec == "instruct"
+                   for spec in (block.get("args") or {}).values())
+
+    def resolve_instruct(self, cap_type: str,
+                         instruct: Optional[str]) -> Optional[str]:
+        """Resolve an instruction for a capability, logging any discard.
+
+        Returns ``None`` when the capability has no instruct channel, or when
+        the instruction maps to nothing and the manifest asks for a drop.
+        """
+        text = "" if instruct is None else str(instruct).strip()
+        if not self.accepts_instruct(cap_type):
+            if text:
+                logger.info(
+                    "[%s] capability %r does not consume 'instruct'; "
+                    "extracted instruction %r discarded",
+                    self.name, cap_type, instruct)
+            return None
+        resolved = resolve_instruct(self._capability_block(cap_type), instruct)
+        if resolved is None and text:
+            logger.info(
+                "[%s] capability %r: instruction %r matched no label; dropped",
+                self.name, cap_type, instruct)
+        return resolved
+
     def _dispatch(self, cap_type: str, server_args: Dict[str, Any]) -> AudioResult:
         block = self.manifest.get("capabilities", {}).get(cap_type)
         if block is None:
@@ -271,8 +342,17 @@ class MappedAdapter:
         return self._dispatch("voice_default", {"text": text, "voice": voice, "instruct": instruct})
 
     def synthesize_clone(self, text: str, ref_audio_path: str,
-                         ref_text: str = "") -> AudioResult:
-        return self._dispatch("voice_clone", {"text": text, "ref_audio_path": ref_audio_path, "ref_text": ref_text})
+                         ref_text: str = "",
+                         instruct: Optional[str] = None) -> AudioResult:
+        accepts = self.accepts_instruct("voice_clone")
+        resolved = self.resolve_instruct("voice_clone", instruct)
+        server_args = {"text": text, "ref_audio_path": ref_audio_path,
+                       "ref_text": ref_text}
+        if accepts:
+            # The key is always present (possibly None): a declarative args
+            # mapping requires it, and native signatures default it.
+            server_args["instruct"] = resolved
+        return self._dispatch("voice_clone", server_args)
 
     def synthesize_create(self, text: str, description: str) -> AudioResult:
         return self._dispatch("voice_create", {"text": text, "description": description})

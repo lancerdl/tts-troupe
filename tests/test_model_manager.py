@@ -52,10 +52,12 @@ class _ProxyShape:
         return self._m.synthesize_default(text=text, voice=voice,
                                           instruct=instruct)
 
-    def synthesize_clone(self, text, ref_audio_path, ref_text=""):
+    def synthesize_clone(self, text, ref_audio_path, ref_text="",
+                         instruct=None):
         return self._m.synthesize_clone(text=text,
                                         ref_audio_path=ref_audio_path,
-                                        ref_text=ref_text)
+                                        ref_text=ref_text,
+                                        instruct=instruct)
 
     def synthesize_create(self, text, description):
         return self._m.synthesize_create(text=text, description=description)
@@ -130,7 +132,7 @@ def test_dispatch_clone_is_native(fake_models_dir, monkeypatch):
     manager = _manager(fake_models_dir, monkeypatch)
     result = manager.synthesize_clone(text="hey", ref_audio_path="ref.wav", ref_text="hi")
     fake = _fake(manager)
-    assert ("synthesize_clone", "hey", "ref.wav", "hi") in fake.calls
+    assert ("synthesize_clone", "hey", "ref.wav", "hi", None) in fake.calls
     assert result == ("clone-audio", 16000)
     manager.shutdown()
 
@@ -298,7 +300,7 @@ def test_synthesize_pinned_rejects_missing_capability(tmp_path, monkeypatch):
     # ...while unpinned routing still finds the capable adapter.
     manager.synthesize_clone(text="x", ref_audio_path="a.wav")
     fake = _fake(manager)
-    assert ("synthesize_clone", "x", "a.wav", "") in fake.calls
+    assert ("synthesize_clone", "x", "a.wav", "", None) in fake.calls
     manager.shutdown()
 
 

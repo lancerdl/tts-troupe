@@ -58,7 +58,7 @@ def test_native_voice_clone_implementation(adapter):
                                       ref_text="transcript")
     assert result.audio == "clone-audio"
     assert result.sample_rate == 16000
-    assert ("synthesize_clone", "hey", "ref.wav", "transcript") in adapter.obj.calls
+    assert ("synthesize_clone", "hey", "ref.wav", "transcript", None) in adapter.obj.calls
 
 
 def test_unmapped_capability_raises(adapter):

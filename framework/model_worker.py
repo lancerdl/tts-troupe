@@ -19,7 +19,7 @@ policy-free except for the aging settings passed on argv):
 
   ping                 tiered CUDA health probe (models.cuda_utils)
   synthesize_default   {text, voice, instruct}
-  synthesize_clone     {text, ref_audio_path, ref_text}
+  synthesize_clone     {text, ref_audio_path, ref_text, instruct}
   synthesize_create    {text, description}
   age                  run adapter aging (voice TTL sweep); reports ``retire``
                        when the adapter has nothing loaded and has been idle
@@ -143,7 +143,8 @@ def _dispatch(cmd: str, args: dict, adapter, cli, last_activity: float,
         if cache is None or hook is None:
             return _encode_audio(adapter.synthesize_clone(
                 text=args["text"], ref_audio_path=args["ref_audio_path"],
-                ref_text=args.get("ref_text", "")))
+                ref_text=args.get("ref_text", ""),
+                instruct=args.get("instruct")))
         return _encode_audio(_synthesize_clone_cached(
             args, adapter, cache, hook))
 
@@ -202,8 +203,12 @@ def _synthesize_clone_cached(args: dict, adapter, cache, hook) -> dict:
         logger.info("extracting voice clone prompt: %s", voice_name)
         prompt = extract(ref_audio, ref_text)
         cache.put(ref_audio, ref_text, voice_name, prompt)
-    return synthesize(text=text, prompt=prompt,
-                      ref_audio_path=ref_audio, ref_text=ref_text)
+    resolved = adapter.resolve_instruct("voice_clone", args.get("instruct"))
+    kwargs = {"text": text, "prompt": prompt,
+              "ref_audio_path": ref_audio, "ref_text": ref_text}
+    if resolved is not None:
+        kwargs["instruct"] = resolved
+    return synthesize(**kwargs)
 
 
 def main(argv=None) -> int:
@@ -225,7 +230,7 @@ def main(argv=None) -> int:
     repo = Path(cli.repo).resolve()
     manifest = load_manifest(repo)
     hook = (manifest.get("capabilities", {}).get("voice_clone", {}) or {}
-            ).get("clone_prompt")
+            ).get("prompt_cache")
     adapter = create_adapter(repo)
     logger.info("worker ready: model %r from %s", adapter.name, repo)
 
@@ -247,7 +252,7 @@ def main(argv=None) -> int:
         logger.info("[CACHE] voice prompt cache active at %s (ttl %.0f min)",
                     cache.cache_dir, cli.prompt_ttl)
     else:
-        logger.info("no clone_prompt hook: voice clone runs without caching")
+        logger.info("no prompt_cache declared: voice clone runs without caching")
 
     if cli.enable_prefetch:
         _verify_models(models_map.values(), logger)
