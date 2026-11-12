@@ -57,9 +57,13 @@ and optionally `response_format`.
    as the provider.
 3. Set the **Provider Endpoint** to
    `http://127.0.0.1:8000/v1/audio/speech`.
-4. Paste the server root's `<model_name>_voices.txt` (one per registered model)
-   contents into **Available Voices (comma separated)**.
-5. Select voices per character.
+4. Set the **Model** field to the TTS Troupe model name or alias you want to
+   use, e.g. `qwen3` or `faster-qwen3-tts`. The voice list is model-specific, so
+   set this before copying voices.
+5. Paste the matching `<model_name>_voices.txt` from the server root into
+   **Available Voices (comma separated)**. For the example above, that is
+   `faster-qwen3-tts_voices.txt`.
+6. Select voices per character.
 
 SillyTavern's `openai-compatible.js` always requests `response_format: "mp3"`,
 which this server natively supports.
@@ -629,7 +633,8 @@ server code (workspace root):
   the clone archive (the model's full addressable voice space, regardless of
   whether prompts have been converted into ICL tensors yet).
 
-Paste `<model_name>_voices.txt` into SillyTavern's **Available Voices** field.
+Paste `<model_name>_voices.txt` into SillyTavern's **Available Voices** field
+after setting the matching model in SillyTavern's **Model** field.
 
 ## Configuration
 
