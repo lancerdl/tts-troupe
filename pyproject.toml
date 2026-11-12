@@ -44,6 +44,7 @@ Issues = "https://github.com/lancerdl/tts-troupe/issues"
 [project.scripts]
 tts-troupe = "server.server:main"
 tts-troupe-transcribe = "server.transcribe_voices:main"
+tts-troupe-sync-presets = "server.sync_presets:main"
 
 [tool.setuptools]
 packages = ["server", "framework"]

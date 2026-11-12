@@ -1,0 +1,124 @@
+"""
+Adapter template for tts-troupe models.
+
+A model integrates with TWO files at its repo root:
+
+    model.yaml    which module/factory to load, and how the manager's calls
+                  map onto the model's API (call / args / result)
+    adapter.py    (this file) the model's lifecycle: construct it lazily,
+                  report VRAM residency, age it out when idle
+
+Write model.yaml FIRST. Most models need nothing here beyond the lifecycle
+below.
+
+This file is NOT the adapter - the adapter is MappedAdapter in framework/: it
+reads model.yaml and calls model methods generically. This file is the model
+HOST: the object those methods live on, and the only code that knows how to
+build it (which library to import, which constructor or classmethod, which
+checkpoints). Add a native synthesis method ONLY for what the mapping grammar
+cannot express:
+
+  - branching on a runtime value (beyond `instruct` presence, which `variants`
+    already covers)
+  - multi-step call chains (build a prompt object, then generate)
+  - argument coercions the arg-spec grammar lacks
+  - a private prompt cache the harness cannot own
+
+Anything expressible as call/args/result belongs in model.yaml.
+
+The class named by `setup.factory` is constructed as:
+
+    factory(config=<dict from setup.config_file>, model_dir=<Path>)
+"""
+
+import logging
+import time
+from typing import Any, Dict, List
+
+logger = logging.getLogger(__name__)
+
+
+class MyModel:
+    """Adapter factory for <model>. Keep it minimal."""
+
+    def __init__(self, config: Dict[str, Any] = None, model_dir: Any = None):
+        config = config or {}
+        # Values come from config.yaml (setup.config_file), not the server.
+        self._model_path = config.get("model_path", "<hf-repo-or-local-path>")
+        self._device = config.get("device", "cuda:0")
+        self._instances: Dict[str, Any] = {}            # key -> loaded object
+        self._instance_last_accessed: Dict[str, float] = {}
+        self.model_dir = model_dir
+
+    # ---- required only when a capability declares `instance: <key>` ----
+    def get_instance(self, key: str) -> Any:
+        """Lazily construct (and cache) the model object for `key`."""
+        if key not in self._instances:
+            from my_model_library import MyModelClass   # heavy import, lazy
+
+            self._instances[key] = MyModelClass(self._model_path,
+                                                device=self._device)
+        self._instance_last_accessed[key] = time.time()
+        return self._instances[key]
+
+    # ---- optional lifecycle (the worker calls these when present) ----
+    def is_loaded(self) -> bool:
+        """Whether any instance is resident. Absent => treated as True."""
+        return any(i is not None for i in self._instances.values())
+
+    def age_caches(self) -> None:
+        """Age adapter-owned caches. Clone prompts are harness-owned; no-op
+        when the adapter keeps nothing."""
+
+    def age_checkpoints(self, idle_timeout_seconds: float) -> List[str]:
+        """Drop instances idle past the threshold; return the dropped keys."""
+        now = time.time()
+        dropped: List[str] = []
+        for key, instance in list(self._instances.items()):
+            last = self._instance_last_accessed.get(key, 0.0)
+            if instance is not None and last > 0.0 \
+                    and (now - last) > idle_timeout_seconds:
+                self._instances[key] = None
+                dropped.append(key)
+                logger.info("[MEMORY] - %r aged out of VRAM", key)
+        return dropped
+
+    # ---- optional: built-in voice catalogue ----
+    def supported_speakers(self) -> List[str]:
+        """Return a LIST of built-in voice names.
+
+        The worker wraps it under ``{"speakers": ...}``, so returning a dict
+        nests it wrongly. Load the model only if you must enumerate live.
+        """
+        return []
+
+    # ---- optional: native synthesis, only for the cases listed above ----
+    # Declare it with `implementation: native` on the capability block; the
+    # worker calls synthesize_<preset|clone|create>. Return an AudioResult or
+    # a plain (audio, sample_rate) tuple; `audio` may be a numpy array or a
+    # (device) torch tensor - the worker normalizes it to CPU float32.
+    #
+    #   def synthesize_clone(self, text, ref_audio_path, ref_text="",
+    #                        instruct=None):
+    #       """`instruct` arrives already resolved against instruct_map."""
+    #
+    # ---- optional: clone-prompt cache hooks (manifest `prompt_cache:`) ----
+    # `synthesize` is the same clone entry point used when caching is off;
+    # `prompt` is the payload from extract_clone_prompt (None when off).
+    #
+    #   def extract_clone_prompt(self, ref_audio_path, ref_text=""):
+    #       """Return the cacheable payload (tensors for most models)."""
+    #
+    #   def synthesize_clone(self, text, ref_audio_path="", ref_text="",
+    #                        instruct=None, prompt=None):
+    #       """Clone the reference; build the prompt yourself if prompt is None."""
+
+
+# ---------------------------------------------------------------------------
+# Both shipped integrations are lifecycle-only or lifecycle-plus-hooks:
+#   models/Ming-3.0-tts/adapter.py        - lifecycle only; every capability
+#                                           (TTS, EMOTION, IP, FREEFORM) is
+#                                           mapped in model.yaml
+#   models/faster-qwen3-tts/adapter.py    - lifecycle + three-checkpoint
+#                                           loading + prompt_cache hooks
+# ---------------------------------------------------------------------------

@@ -48,8 +48,8 @@ class _ProxyShape:
     def health(self, force: bool = False) -> bool:
         return True
 
-    def synthesize_default(self, text, voice, instruct=None):
-        return self._m.synthesize_default(text=text, voice=voice,
+    def synthesize_preset(self, text, voice, instruct=None):
+        return self._m.synthesize_preset(text=text, voice=voice,
                                           instruct=instruct)
 
     def synthesize_clone(self, text, ref_audio_path, ref_text="",
@@ -98,9 +98,8 @@ def _adapter(manager):
 def test_capabilities_reported(fake_models_dir, monkeypatch):
     manager = _manager(fake_models_dir, monkeypatch)
     caps = _adapter(manager).capabilities()
-    assert caps.voice_default is True
+    assert caps.voice_preset is True
     assert caps.presets == ("alloy", "echo")
-    assert caps.default_voice == "alloy"
     assert caps.voice_clone is True
     assert caps.voice_create is True
     manager.shutdown()
@@ -108,7 +107,7 @@ def test_capabilities_reported(fake_models_dir, monkeypatch):
 
 def test_dispatch_default_resolves_args(fake_models_dir, monkeypatch):
     manager = _manager(fake_models_dir, monkeypatch)
-    result = manager.synthesize_default(voice="echo", text="hello")
+    result = manager.synthesize_preset(voice="echo", text="hello")
     fake = _fake(manager)
     assert fake.calls == [("gen_preset", "hello", "echo", 0.9, "fast")]
     assert isinstance(result, AudioResult)
@@ -139,7 +138,7 @@ def test_dispatch_clone_is_native(fake_models_dir, monkeypatch):
 
 def test_minimal_manifest_dispatch(minimal_models_dir, monkeypatch):
     manager = _manager(minimal_models_dir, monkeypatch)
-    result = manager.synthesize_default(voice="alloy", text="hi")
+    result = manager.synthesize_preset(voice="alloy", text="hi")
     fake = _fake(manager)
     assert fake.calls == [("gen_preset", "hi", "alloy", None, None)]
     assert result.audio == "fake-audio"
@@ -160,7 +159,7 @@ def test_unload_then_resynthesize(fake_models_dir, monkeypatch):
     manager = _manager(fake_models_dir, monkeypatch)
     fake = _fake(manager)
 
-    manager.synthesize_default(voice="alloy", text="hi")
+    manager.synthesize_preset(voice="alloy", text="hi")
 
     with manager._manager_lock:
         manager.unload_model("fake-tts")
@@ -168,7 +167,7 @@ def test_unload_then_resynthesize(fake_models_dir, monkeypatch):
     assert fake.shutdown_count == 1
 
     # The next synthesis runs again through the (unchanged) adapter.
-    manager.synthesize_default(voice="alloy", text="hi2")
+    manager.synthesize_preset(voice="alloy", text="hi2")
     assert fake.calls[-1] == ("gen_preset", "hi2", "alloy", 0.9, "fast")
     manager.shutdown()
 
@@ -176,7 +175,7 @@ def test_unload_then_resynthesize(fake_models_dir, monkeypatch):
 def test_age_models_unloads_idle(fake_models_dir, monkeypatch):
     manager = _manager(fake_models_dir, monkeypatch)
     fake = _fake(manager)
-    manager.synthesize_default(voice="alloy", text="hi")
+    manager.synthesize_preset(voice="alloy", text="hi")
 
     # Simulate idleness beyond the 60-minute timeout.
     manager._last_accessed["fake-tts"] = time.time() - 3601
@@ -188,7 +187,7 @@ def test_age_models_unloads_idle(fake_models_dir, monkeypatch):
 
 def test_shutdown_is_idempotent(fake_models_dir, monkeypatch):
     manager = _manager(fake_models_dir, monkeypatch)
-    manager.synthesize_default(voice="alloy", text="hi")
+    manager.synthesize_preset(voice="alloy", text="hi")
 
     manager.shutdown()
     first_shutdowns = _adapter(manager).shutdown_count
@@ -240,7 +239,7 @@ def test_missing_runtime_block_is_rejected(tmp_path):
 def test_synthesis_error_wraps_model_failure(broken_models_dir, monkeypatch):
     manager = _manager(broken_models_dir, monkeypatch)
     with pytest.raises(SynthesisError) as excinfo:
-        manager.synthesize_default(voice="alloy", text="hi")
+        manager.synthesize_preset(voice="alloy", text="hi")
     assert excinfo.value.model_name == "broken-tts"
     assert isinstance(excinfo.value.cause, RuntimeError)
     assert "boom" in str(excinfo.value)
@@ -282,7 +281,7 @@ def test_presets_by_model(fake_models_dir, monkeypatch):
 
 def test_synthesize_pinned_to_model(tmp_path, monkeypatch):
     manager = _aliased_manager(tmp_path, monkeypatch)
-    manager.synthesize_default(voice="alloy", text="hi", model="qwen3")
+    manager.synthesize_preset(voice="alloy", text="hi", model="qwen3")
     fake = _fake(manager)
     assert fake.calls == [("gen_preset", "hi", "alloy", 0.9, "fast")]
     manager.shutdown()

@@ -84,7 +84,7 @@ def extract_instructions(raw_text: str) -> Tuple[str, Optional[str]]:
     Curly braces are the instruction delimiter and are always removed from
     the text, because an instruction is a directive rather than content.
     Whether the model ever receives the value is decided elsewhere, by the
-    ``voice_default.args`` mapping in its ``model.yaml``.
+    ``voice_preset.args`` mapping in its ``model.yaml``.
 
     The other two delimiters are deliberately untouched here. Square brackets
     are native content for some models (``[Sigh]``, ``[Laughter]`` spoken as

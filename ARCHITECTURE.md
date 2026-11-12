@@ -69,10 +69,11 @@ arg/result spec forms — is documented in the annotated template
 
 **Manifest-only capabilities:** `capabilities_from_manifest()` derives the
 capability view without importing model code, so a model whose venv has not
-been set up yet still registers, advertises presets/aliases, and routes —
-synthesis then returns **501** pointing at its setup script. Likewise
-`speakers` catalogue queries and `presets_by_model` are manifest-derived;
-only synthesis and the speaker catalogue itself touch the model.
+been set up yet still registers, advertises its voices and aliases, and
+routes — synthesis then returns **501** pointing at its setup script. The
+built-in voice list is a sidecar read (`<repo>/presets.txt`, merged in
+`load_manifest`), never a model call; the `speakers` catalogue query is the
+only voice lookup that touches the model.
 
 ## 4. Wire protocol (JSON over stdio)
 
@@ -101,7 +102,7 @@ serializes per model, so there is no multiplexing.
 | Command | Purpose |
 | --- | --- |
 | `ping` | Liveness + CUDA health probe executed inside the worker (tiered: zero-cost when no CUDA context exists; alloc+sync when one does). Returns `cuda_ok`. |
-| `synthesize_default` | Preset-voice synthesis (text, voice, instruct). |
+| `synthesize_preset` | Preset-voice synthesis (text, voice, instruct). |
 | `synthesize_clone` | Reference cloning (text, ABSOLUTE ref path, ref_text, instruct). The worker opens the file itself; audio bytes never cross the pipe. With `prompt_cache`, the harness intercepts: extract → cache → synthesize-with-prompt. |
 | `synthesize_create` | Voice-design synthesis (text, description). |
 | `speakers` | Complete built-in speaker catalogue from the loaded model (may trigger a checkpoint load on first call). |
@@ -160,8 +161,8 @@ capability's `args` mapping binds it) → the empty-input silence check:
    value as the description. Requires `voice_create` and a non-empty
    directive; otherwise `400`.
 2. **Preset voices second** — case-insensitive match against that model's
-   manifest `presets` → `synthesize_default` (the adapter picks its
-   preset checkpoint).
+   built-in list (`<repo>/presets.txt`) → `synthesize_preset` (the adapter
+   picks its preset checkpoint).
 3. **Clone voices third** — case-insensitive match against the voice archive
    stems, only if the model supports `voice_clone` → `synthesize_clone`
    (the clone checkpoint; reference audio + transcript).
@@ -199,9 +200,9 @@ Boot order (FastAPI lifespan):
 3. **Exports to the workspace root**:
    - `voices.txt` — all cloneable archive voices (comma-separated).
    - `<model_name>_voices.txt` — one per registered model, in selection
-     order: `custom` when the model declares `voice_create`, then its manifest
-     presets, then the clone archive (the model's full addressable voice
-     space, regardless of ICL-conversion state).
+     order: `custom` when the model declares `voice_create`, then its built-in
+     presets (from `presets.txt`), then the clone archive (the model's full
+     addressable voice space, regardless of ICL-conversion state).
 
 The scan result feeds request routing (clone voices) and the console's voice
 picker. The scan runs once at startup; new clips require a restart (the
@@ -296,12 +297,12 @@ knows nothing about caching.
   used as the voice-design description instead of delivery steering.
   Never route instructions through `[..]`; that silently deletes native
   content on models that speak it.
-- **On the clone path the instruction is resolved through `instruct_map`.**
-  A declared map translates client terms to model-native labels (`{sad}` →
-  悲伤); a miss is dropped (or passed raw, per `instruct_on_miss`), so an
-  unrecognized directive degrades to a plain clone rather than a bad control.
-  Without `accepts_instruct`, the instruction is discarded and logged, exactly
-  as for any other capability.
+- **On the clone path the instruction is resolved through `instruct_map`
+  and then selects a `variants` entry.** The resolved state — `absent`,
+  `mapped` (a label matched), or `raw` (passed through per
+  `instruct_on_miss`) — picks the call shape, so a miss degrades to the
+  default (plain) clone rather than a bad control. A capability with no
+  instruction channel discards and logs it, as for any other capability.
 - **An unbound instruction is logged, not raised.** `MappedAdapter._dispatch`
   emits an INFO line naming the model, the capability, and the discarded
   value when a non-empty `instruct` arrives at a capability that does not

@@ -221,9 +221,9 @@ class ProxyAdapter:
 
     # ---- synthesis ----
 
-    def synthesize_default(self, text: str, voice: str,
-                           instruct: Optional[str] = None) -> AudioResult:
-        return self._synthesize("synthesize_default",
+    def synthesize_preset(self, text: str, voice: str,
+                          instruct: Optional[str] = None) -> AudioResult:
+        return self._synthesize("synthesize_preset",
                                 {"text": text, "voice": voice,
                                  "instruct": instruct})
 

@@ -327,7 +327,7 @@ async def create_speech(req: SpeechRequest):
 
     # Inline {instruction} directives are model-agnostic: always extracted and
     # always removed from the text. Whether the resolved model receives the
-    # value is decided by the voice_default args mapping in its manifest.
+    # value is decided by the voice_preset args mapping in its manifest.
     input_text, instruct = extract_instructions(input_text)
 
     if not input_text.strip():
@@ -383,12 +383,12 @@ async def create_speech(req: SpeechRequest):
 
         # Priority 1: the pinned model's custom (preset) voices. Scoping the
         # match to one model's list also resolves cross-model name collisions.
-        if caps is not None and caps.voice_default:
+        if caps is not None and caps.voice_preset:
             preset_match = _match_preset(voice_input, caps.presets)
             if preset_match:
                 logger.info("Executing preset voice synthesis: %r (model=%r)",
                             preset_match, resolved_model)
-                return model_manager.synthesize_default(
+                return model_manager.synthesize_preset(
                     voice=preset_match, text=input_text, instruct=instruct,
                     model=resolved_model)
 

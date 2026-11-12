@@ -38,7 +38,7 @@ def test_wire_synthesis_end_to_end(wire_models_dir):
     manager = _manager(wire_models_dir)
     proxy = _proxy(manager)
 
-    result = manager.synthesize_default(voice="alloy", text="hello")
+    result = manager.synthesize_preset(voice="alloy", text="hello")
     assert isinstance(result.audio, np.ndarray)
     assert np.allclose(result.audio, [0.1, 0.2, 0.3])
     assert result.sample_rate == 24000
@@ -58,13 +58,13 @@ def test_worker_respawns_after_death(wire_models_dir):
     manager = _manager(wire_models_dir)
     proxy = _proxy(manager)
 
-    manager.synthesize_default(voice="alloy", text="first")
+    manager.synthesize_preset(voice="alloy", text="first")
     proc = proxy._proc
     proc.kill()  # simulate a worker crash mid-session
     proc.wait(timeout=5)
     # The proxy still believes it is running until a command detects the EOF.
 
-    result = manager.synthesize_default(voice="alloy", text="second")
+    result = manager.synthesize_preset(voice="alloy", text="second")
     assert np.allclose(result.audio, [0.1, 0.2, 0.3])
     assert proxy._proc is not None and proxy._proc is not proc
     manager.shutdown()
@@ -75,10 +75,10 @@ def test_absent_venv_registers_but_returns_501_type(tmp_path, wire_repo_factory)
     manager = _manager(tmp_path / "models")
 
     caps = manager.capabilities()
-    assert caps[0].voice_default is True  # capability view works without a venv
+    assert caps[0].voice_preset is True  # capability view works without a venv
 
     with pytest.raises(ModelNotInitializedError):
-        manager.synthesize_default(voice="alloy", text="hi")
+        manager.synthesize_preset(voice="alloy", text="hi")
     manager.shutdown()
 
 
@@ -101,7 +101,7 @@ def test_health_without_worker_is_healthy_idle(wire_models_dir):
 def test_shutdown_is_transport_safe_on_dead_worker(wire_models_dir):
     manager = _manager(wire_models_dir)
     proxy = _proxy(manager)
-    manager.synthesize_default(voice="alloy", text="hi")
+    manager.synthesize_preset(voice="alloy", text="hi")
     proc = proxy._proc
     proc.kill()
     proc.wait(timeout=5)
@@ -120,7 +120,7 @@ def test_hang_worker_single_retry_then_degraded(wire_repo_factory):
                        recovery_cooldown=5.0)
 
     with pytest.raises(ModelNotReadyError):
-        manager.synthesize_default(voice="alloy", text="hi")
+        manager.synthesize_preset(voice="alloy", text="hi")
 
     proxy = _proxy(manager)
     assert proxy._proc is None  # failed re-init leaves nothing running
@@ -128,7 +128,7 @@ def test_hang_worker_single_retry_then_degraded(wire_repo_factory):
 
     # During the cooldown, requests fail fast (503 path) without attempts.
     with pytest.raises(ModelNotReadyError):
-        manager.synthesize_default(voice="alloy", text="hi again")
+        manager.synthesize_preset(voice="alloy", text="hi again")
 
     manager.shutdown()
 
@@ -144,7 +144,7 @@ def test_hang_worker_recovers_after_cooldown(wire_repo_factory):
                        recovery_cooldown=1.0)
 
     with pytest.raises(ModelNotReadyError):
-        manager.synthesize_default(voice="alloy", text="hi")
+        manager.synthesize_preset(voice="alloy", text="hi")
 
     # Simulate the cooldown elapsing (real policy: wall-clock wait).
     proxy = _proxy(manager)
@@ -152,5 +152,5 @@ def test_hang_worker_recovers_after_cooldown(wire_repo_factory):
 
     # Still hangs -> one attempt again -> degraded again. The ladder repeats.
     with pytest.raises(ModelNotReadyError):
-        manager.synthesize_default(voice="alloy", text="hi")
+        manager.synthesize_preset(voice="alloy", text="hi")
     manager.shutdown()

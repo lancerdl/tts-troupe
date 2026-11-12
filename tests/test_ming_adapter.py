@@ -1,35 +1,18 @@
-"""Ming adapter: an instruction selects the EMOTION task on the clone path."""
-import importlib.util
+"""Ming's declarative capability mapping (real manifest + adapter, fake pipeline).
+
+There are no synthesis methods left in the adapter: model.yaml maps every task
+onto MingTTS.synthesize. These tests load the real files and assert the mapped
+task/args for presets, both clone variants, and free-form design.
+"""
 from pathlib import Path
 
 import numpy as np
+import pytest
+
+from framework.adapter import create_adapter
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def _load_ming_module():
-    path = ROOT / "models" / "Ming-3.0-tts" / "adapter.py"
-    spec = importlib.util.spec_from_file_location("ming_adapter_under_test",
-                                                  path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-class _FakeWaveform:
-    """Stands in for a torch tensor (the server venv has no torch)."""
-
-    def detach(self):
-        return self
-
-    def to(self, *args, **kwargs):
-        return self
-
-    def float(self):
-        return self
-
-    def numpy(self):
-        return np.zeros(4, dtype=np.float32)
+MING = ROOT / "models" / "Ming-3.0-tts"
 
 
 class _FakePipeline:
@@ -40,42 +23,74 @@ class _FakePipeline:
 
     def synthesize(self, **kwargs):
         self.calls.append(kwargs)
-        return _FakeWaveform()
+        return np.zeros(4, dtype=np.float32)
 
 
-def _adapter_with_fake_pipeline():
-    adapter = _load_ming_module().MingTTSModel(config={}, model_dir=None)
+@pytest.fixture
+def adapter():
+    mapped = create_adapter(MING)
     fake = _FakePipeline()
-    adapter._instances["tts"] = fake   # bypass get_instance's model import
-    return adapter, fake
+    mapped.obj._instances["tts"] = fake   # bypass the ming_tts import/load
+    return mapped, fake
 
 
-def test_plain_clone_uses_the_tts_task():
-    adapter, fake = _adapter_with_fake_pipeline()
-    adapter.synthesize_clone("hello", "ref.wav", "transcript")
+def test_preset_uses_the_ip_task(adapter):
+    mapped, fake = adapter
+    result = mapped.synthesize_preset(text="hi", voice="UK_George")
+    (call,) = fake.calls
+    assert call["task"] == "IP"
+    assert call["controls"] == {"ip": "UK_George"}
+    assert call["use_zero_spk_emb"] is True
+    assert result.sample_rate == 24000
+
+
+def test_plain_clone_uses_the_tts_task(adapter):
+    mapped, fake = adapter
+    mapped.synthesize_clone(text="hi", ref_audio_path="ref.wav", ref_text="t")
     (call,) = fake.calls
     assert call["task"] == "TTS"
-    assert call["prompt_text"] == "transcript"
+    assert call["prompt_text"] == "t"
     assert call["language_id"] == "English"
     assert call["use_spk_emb"] is True
     assert "controls" not in call
 
 
-def test_instruct_label_selects_the_emotion_task():
-    adapter, fake = _adapter_with_fake_pipeline()
-    adapter.synthesize_clone("hello", "ref.wav", "transcript", instruct="悲伤")
+def test_mapped_instruction_selects_the_emotion_variant(adapter):
+    mapped, fake = adapter
+    mapped.synthesize_clone(text="hi", ref_audio_path="ref.wav",
+                            ref_text="t", instruct="sad")
     (call,) = fake.calls
     assert call["task"] == "EMOTION"
     assert call["controls"] == {"emotion": "悲伤"}
-    assert call["use_spk_emb"] is True
-    # EMOTION conditions on the speaker embedding only: no transcript, no
-    # explicit target language.
+    # EMOTION conditions on the speaker embedding only: no transcript.
     assert "prompt_text" not in call
-    assert "language_id" not in call
 
 
-def test_clone_result_carries_sample_rate():
-    adapter, _ = _adapter_with_fake_pipeline()
-    audio, sample_rate = adapter.synthesize_clone("hello", "ref.wav")
-    assert sample_rate == 24000
-    assert audio.shape == (4,)
+def test_native_label_input_still_maps(adapter):
+    mapped, fake = adapter
+    mapped.synthesize_clone(text="hi", ref_audio_path="ref.wav", instruct="悲伤")
+    assert fake.calls[-1]["controls"] == {"emotion": "悲伤"}
+
+
+def test_unmatched_instruction_falls_back_to_the_tts_variant(adapter):
+    mapped, fake = adapter
+    mapped.synthesize_clone(text="hi", ref_audio_path="ref.wav",
+                            ref_text="t", instruct="wistful")
+    (call,) = fake.calls
+    assert call["task"] == "TTS"
+    assert "controls" not in call
+
+
+def test_freeform_description_uses_the_freeform_task(adapter):
+    mapped, fake = adapter
+    mapped.synthesize_create(text="hi", description="an old raspy man")
+    (call,) = fake.calls
+    assert call["task"] == "FREEFORM"
+    assert call["instruction"] == "an old raspy man"
+    assert call["use_zero_spk_emb"] is True
+
+
+def test_supported_speakers_is_a_list(adapter):
+    mapped, _ = adapter
+    speakers = mapped.obj.supported_speakers()
+    assert speakers == ["US_Emma", "UK_George", "UK_Charlotte", "灵小柔", "灵楷"]

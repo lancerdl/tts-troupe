@@ -18,7 +18,7 @@ Commands (deadlines are enforced by the proxy, client side - this process is
 policy-free except for the aging settings passed on argv):
 
   ping                 tiered CUDA health probe (models.cuda_utils)
-  synthesize_default   {text, voice, instruct}
+  synthesize_preset    {text, voice, instruct}
   synthesize_clone     {text, ref_audio_path, ref_text, instruct}
   synthesize_create    {text, description}
   age                  run adapter aging (voice TTL sweep); reports ``retire``
@@ -119,6 +119,8 @@ def _encode_audio(result) -> dict:
         audio, sample_rate = result[0], result[1]
     else:
         audio, sample_rate = result.audio, result.sample_rate
+    if hasattr(audio, "detach"):   # torch tensor, possibly device-resident
+        audio = audio.detach().to("cpu").float().numpy()
     audio = np.asarray(audio, dtype=np.float32)
     return {
         "audio_b64": base64.b64encode(audio.tobytes()).decode("ascii"),
@@ -134,8 +136,8 @@ def _dispatch(cmd: str, args: dict, adapter, cli, last_activity: float,
                              timeout_seconds=cli.cuda_health_timeout)
         return {"running": True, "cuda_ok": bool(ok)}
 
-    if cmd == "synthesize_default":
-        return _encode_audio(adapter.synthesize_default(
+    if cmd == "synthesize_preset":
+        return _encode_audio(adapter.synthesize_preset(
             text=args["text"], voice=args["voice"],
             instruct=args.get("instruct")))
 
@@ -203,11 +205,11 @@ def _synthesize_clone_cached(args: dict, adapter, cache, hook) -> dict:
         logger.info("extracting voice clone prompt: %s", voice_name)
         prompt = extract(ref_audio, ref_text)
         cache.put(ref_audio, ref_text, voice_name, prompt)
-    resolved = adapter.resolve_instruct("voice_clone", args.get("instruct"))
+    resolution = adapter.resolve_instruct("voice_clone", args.get("instruct"))
     kwargs = {"text": text, "prompt": prompt,
               "ref_audio_path": ref_audio, "ref_text": ref_text}
-    if resolved is not None:
-        kwargs["instruct"] = resolved
+    if resolution.value is not None:
+        kwargs["instruct"] = resolution.value
     return synthesize(**kwargs)
 
 

@@ -261,15 +261,15 @@ class ModelManager:
                                 text=text, ref_audio_path=ref_audio_path,
                                 ref_text=ref_text, instruct=instruct)
 
-    def synthesize_default(self, voice: str, text: str,
-                           instruct: Optional[str] = None,
-                           model: Optional[str] = None) -> AudioResult:
-        """Synthesize speech with a named preset voice.
+    def synthesize_preset(self, voice: str, text: str,
+                          instruct: Optional[str] = None,
+                          model: Optional[str] = None) -> AudioResult:
+        """Synthesize speech with a built-in preset voice.
 
         With `model`, the synthesis is pinned to that adapter (which must
         support preset voices)."""
-        name = self._pick("voice_default", model)
-        return self._synthesize(name, "synthesize_default",
+        name = self._pick("voice_preset", model)
+        return self._synthesize(name, "synthesize_preset",
                                 text=text, voice=voice, instruct=instruct)
 
     def synthesize_create(self, text: str, description: str,

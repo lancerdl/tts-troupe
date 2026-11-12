@@ -26,22 +26,21 @@ def test_create_adapter_binds_factory_and_config(adapter, fake_models_dir):
 
 def test_capabilities_built_from_manifest(adapter):
     caps = adapter.capabilities()
-    assert caps.voice_default is True
+    assert caps.voice_preset is True
     assert caps.voice_clone is True
     assert caps.voice_create is True
     assert caps.presets == ("alloy", "echo")
-    assert caps.default_voice == "alloy"
 
 
-def test_voice_default_passthrough_config_and_const_args(adapter):
-    result = adapter.synthesize_default(text="hi", voice="alloy", instruct=None)
+def test_voice_preset_passthrough_config_and_const_args(adapter):
+    result = adapter.synthesize_preset(text="hi", voice="alloy", instruct=None)
     assert result.audio == "fake-audio"
     assert result.sample_rate == 24000
     assert ("gen_preset", "hi", "alloy", 0.9, "fast") in adapter.obj.calls
 
 
-def test_voice_default_with_custom_instruct_passthrough(adapter):
-    adapter.synthesize_default(text="hi", voice="echo", instruct="cheerful")
+def test_voice_preset_with_custom_instruct_passthrough(adapter):
+    adapter.synthesize_preset(text="hi", voice="echo", instruct="cheerful")
     assert ("gen_preset", "hi", "echo", 0.9, "fast") in adapter.obj.calls
 
 
@@ -69,7 +68,7 @@ def test_unmapped_capability_raises(adapter):
 def test_unsupported_arg_spec_raises(fake_models_dir):
     manifest = {**FAKE_MANIFEST, "name": "argerr",
                 "capabilities": {
-                    "voice_default": {
+                    "voice_preset": {
                         "call": "gen_preset",
                         "args": {"text": {"weird": 1}, "voice": "voice"},
                     },
@@ -77,7 +76,7 @@ def test_unsupported_arg_spec_raises(fake_models_dir):
     make_model_repo(fake_models_dir, "argerr", manifest, {"pitch": 0.9})
     adapter = create_adapter(fake_models_dir / "argerr")
     with pytest.raises(ValueError):
-        adapter.synthesize_default(text="hi", voice="alloy", instruct=None)
+        adapter.synthesize_preset(text="hi", voice="alloy", instruct=None)
 
 
 def test_resolve_arg_passthrough_missing_raises():

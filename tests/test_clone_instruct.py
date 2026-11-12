@@ -3,8 +3,19 @@
 Covers the voice_clone `accepts_instruct` / `instruct_map` / `instruct_on_miss`
 keys, the MappedAdapter gate, and the harness-cached worker branch.
 """
+import numpy as np
+import pytest
+
 from conftest import FAKE_MANIFEST, make_model_repo
-from framework.adapter import MappedAdapter, create_adapter, resolve_instruct
+from framework.adapter import (
+    InstructResolution,
+    MappedAdapter,
+    _extract_result,
+    _resolve_arg,
+    _validate_capabilities,
+    create_adapter,
+    resolve_instruct,
+)
 from framework.model_worker import _synthesize_clone_cached
 
 MAPPED = {
@@ -17,36 +28,37 @@ MAPPED = {
 # ---- resolve_instruct (pure, manifest-driven) ----
 
 def test_resolve_instruct_maps_a_key_case_insensitively():
-    assert resolve_instruct(MAPPED, "sad") == "悲伤"
-    assert resolve_instruct(MAPPED, "  Sad  ") == "悲伤"
+    assert resolve_instruct(MAPPED, "sad") == InstructResolution("悲伤", "mapped")
+    assert resolve_instruct(MAPPED, "  Sad  ") == InstructResolution("悲伤", "mapped")
 
 
 def test_resolve_instruct_accepts_a_label_the_client_already_sent():
-    assert resolve_instruct(MAPPED, "高兴") == "高兴"
+    assert resolve_instruct(MAPPED, "高兴") == InstructResolution("高兴", "mapped")
 
 
 def test_resolve_instruct_first_hit_wins_across_joined_directives():
     # The server joins multiple directives with ", ".
-    assert resolve_instruct(MAPPED, "sad, slow") == "悲伤"
-    assert resolve_instruct(MAPPED, "slow, sad") == "悲伤"
+    assert resolve_instruct(MAPPED, "sad, slow").value == "悲伤"
+    assert resolve_instruct(MAPPED, "slow, sad").value == "悲伤"
 
 
-def test_resolve_instruct_miss_drops_by_default():
-    assert resolve_instruct(MAPPED, "wistful") is None
+def test_resolve_instruct_miss_drops_to_absent():
+    assert resolve_instruct(MAPPED, "wistful") == InstructResolution(None, "absent")
 
 
-def test_resolve_instruct_miss_can_pass_through_raw():
+def test_resolve_instruct_miss_can_pass_through_as_raw():
     assert resolve_instruct({**MAPPED, "instruct_on_miss": "raw"},
-                            "wistful") == "wistful"
+                            "wistful") == InstructResolution("wistful", "raw")
 
 
-def test_resolve_instruct_without_a_map_passes_through():
-    assert resolve_instruct({"accepts_instruct": True}, "cheerful") == "cheerful"
+def test_resolve_instruct_without_a_map_is_raw():
+    assert resolve_instruct({"accepts_instruct": True},
+                            "cheerful") == InstructResolution("cheerful", "raw")
 
 
-def test_resolve_instruct_blank_yields_none():
-    assert resolve_instruct(MAPPED, None) is None
-    assert resolve_instruct(MAPPED, "   ") is None
+def test_resolve_instruct_blank_yields_absent():
+    assert resolve_instruct(MAPPED, None) == InstructResolution(None, "absent")
+    assert resolve_instruct(MAPPED, "   ") == InstructResolution(None, "absent")
 
 
 # ---- MappedAdapter gate ----
@@ -121,20 +133,20 @@ class _HookObj:
 
 
 class _StubAdapter:
-    def __init__(self, resolved):
+    def __init__(self, resolution):
         self.obj = _HookObj()
-        self._resolved = resolved
+        self._resolution = resolution
 
     def resolve_instruct(self, cap_type, instruct):
         assert cap_type == "voice_clone"
-        return self._resolved
+        return self._resolution
 
 
 HOOK = {"extract": "extract_prompt", "synthesize": "synth"}
 
 
 def test_cached_clone_forwards_the_resolved_instruct():
-    adapter = _StubAdapter("悲伤")
+    adapter = _StubAdapter(InstructResolution("悲伤", "mapped"))
     _synthesize_clone_cached(
         {"text": "hi", "ref_audio_path": "ref.wav", "ref_text": "t",
          "instruct": "sad"}, adapter, _StubCache(), HOOK)
@@ -144,7 +156,88 @@ def test_cached_clone_forwards_the_resolved_instruct():
 
 
 def test_cached_clone_omits_instruct_when_nothing_resolved():
-    adapter = _StubAdapter(None)
+    adapter = _StubAdapter(InstructResolution(None, "absent"))
     _synthesize_clone_cached({"text": "hi", "ref_audio_path": "ref.wav"},
                              adapter, _StubCache(), HOOK)
     assert "instruct" not in adapter.obj.calls[-1]
+
+
+# ---- spec composition, result specs and variant selection ----
+
+def test_dict_arg_composes_a_structured_kwarg():
+    assert _resolve_arg({"dict": {"emotion": "instruct"}},
+                        {"instruct": "悲伤"}, {}) == {"emotion": "悲伤"}
+
+
+def test_nested_dict_instruct_counts_as_a_channel(tmp_path):
+    class _Obj:
+        def make(self, **kwargs):
+            return ([0.0], 24000)
+
+    manifest = {"name": "d", "capabilities": {"voice_clone": {
+        "call": "make",
+        "args": {"text": "text", "controls": {"dict": {"emotion": "instruct"}}},
+        "result": {"audio": {"index": 0}, "sample_rate": {"index": 1}}}}}
+    adapter = MappedAdapter(manifest, _Obj(), {}, tmp_path)
+    assert adapter.accepts_instruct("voice_clone") is True
+
+
+def test_result_attr_reads_sample_rate_from_the_target():
+    class _Target:
+        sample_rate = 24000
+
+    result = _extract_result(
+        {"audio": {"index": []}, "sample_rate": {"attr": "sample_rate"}},
+        np.zeros(4, dtype=np.float32), _Target())
+    assert result.sample_rate == 24000
+    assert result.audio.shape == (4,)
+
+
+class _Obj:
+    def __init__(self):
+        self.calls = []
+
+    def make(self, **kwargs):
+        self.calls.append(kwargs)
+        return ([0.0], 24000)
+
+
+VARIANTS = {"name": "v", "capabilities": {"voice_clone": {
+    "instruct_map": {"sad": "悲伤"},
+    "instruct_on_miss": "drop",
+    "variants": [
+        {"when": {"instruct": "mapped"}, "call": "make",
+         "args": {"text": "text", "controls": {"dict": {"emotion": "instruct"}}},
+         "result": {"audio": {"index": 0}, "sample_rate": {"index": 1}}},
+        {"call": "make",
+         "args": {"text": "text"},
+         "result": {"audio": {"index": 0}, "sample_rate": {"index": 1}}},
+    ]}}}
+
+
+def test_variant_selection_uses_the_mapped_state(tmp_path):
+    obj = _Obj()
+    adapter = MappedAdapter(VARIANTS, obj, {}, tmp_path)
+    adapter.synthesize_clone(text="hi", ref_audio_path="r", instruct="sad")
+    assert obj.calls[-1] == {"text": "hi", "controls": {"emotion": "悲伤"}}
+
+
+def test_variant_selection_falls_back_to_the_default(tmp_path):
+    obj = _Obj()
+    adapter = MappedAdapter(VARIANTS, obj, {}, tmp_path)
+    adapter.synthesize_clone(text="hi", ref_audio_path="r", instruct="wistful")
+    assert obj.calls[-1] == {"text": "hi"}
+
+
+def test_variants_and_implementation_are_mutually_exclusive(tmp_path):
+    manifest = {"capabilities": {"voice_clone": {
+        "implementation": "native", "variants": [{"call": "make"}]}}}
+    with pytest.raises(ValueError):
+        _validate_capabilities(manifest, tmp_path)
+
+
+def test_variants_require_exactly_one_default(tmp_path):
+    manifest = {"capabilities": {"voice_clone": {"variants": [
+        {"when": {"instruct": "mapped"}, "call": "make"}]}}}
+    with pytest.raises(ValueError):
+        _validate_capabilities(manifest, tmp_path)

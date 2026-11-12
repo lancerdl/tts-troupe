@@ -80,7 +80,36 @@ The server discovers model repos from the `models:` list in `config.yaml` (or th
 
 A model integrates by (a) being a git repo that owns its own dependencies and setup — either an installable package (`pyproject.toml` + setup script) or a directory of modules plus `requirements.txt` — (b) being given a `model.yaml` at its root (which **you** author) declaring its adapter factory and capability mappings plus a `runtime:` block, and (c) being added to the `models:` list in `config.yaml` — zero server changes. Models with conflicting dependencies coexist because each runs in its own interpreter.
 
-The annotated [`model.yaml.template`](model.yaml.template) at the repo root is the full reference — every key with its required/optional status, default, and the arg/result spec forms. Copy it to `model.yaml` in the model repo and edit.
+The annotated [`model.yaml.template`](model.yaml.template) at the repo root is the full reference — every key with its required/optional status, default, and the arg/result spec forms (`{const:}`, `{config:}`, `{dict:}`; result `{index:}` / `{attr:}`). Copy it to `model.yaml` in the model repo and edit.
+
+#### Built-in voices (`presets.txt`)
+
+A model's built-in voice list is **not** a manifest key. It lives in a comma-separated sidecar, `models/<repo>/presets.txt`:
+
+```
+Vivian,Serena,Uncle_Fu,Dylan,Eric,Ryan,Aiden,Ono_Anna,Sohee
+```
+
+The server reads it at registration (a file read — no model code, no checkpoint load). Generate it by asking the model, which runs `supported_speakers()` in the model's own venv (this may load a checkpoint, so it is deliberate and one-off):
+
+```
+tts-troupe-sync-presets              # every repo under models/
+tts-troupe-sync-presets ming qwen3   # repo dir, manifest name, or alias
+```
+
+You can also write the file by hand. Without it the model simply has no preset voices: preset names fall through to the clone/design checks and then `400`.
+
+#### Authoring `adapter.py`
+
+The companion file is the model's **lifecycle**, not its capabilities. The mapper itself lives in `framework/` (`MappedAdapter`); `adapter.py` is the model **host** — the object the mapping's calls target, plus construction and residency. Write it only for what `model.yaml` cannot express:
+
+- **the factory class** named by `setup.factory`, constructed as `factory(config=<setup.config_file dict>, model_dir=<Path>)`;
+- **`get_instance(key)`** — only when a capability names an `instance:`;
+- optionally `is_loaded`, `age_caches`, `age_checkpoints`, and `supported_speakers` (must return a **list** — the worker wraps it under `{"speakers": …}`).
+
+Everything else belongs in the manifest: task/argument shaping, structured kwargs (`controls: {dict: {emotion: instruct}}`), per-instruction variants, and result extraction. Reach for a native `synthesize_<preset|clone|create>` method only when the grammar genuinely cannot express the call — runtime branching beyond `instruct` presence, multi-step call chains, argument coercions, or a private prompt cache.
+
+[`adapter.py.template`](adapter.py.template) at the repo root is the skeleton to copy. The two worked integrations show the split: `Ming-3.0-tts` is entirely `model.yaml` plus a lifecycle-only adapter (its `TTS`, `EMOTION`, `IP` and `FREEFORM` tasks are all mapped), while `faster-qwen3-tts` keeps hooks for its three checkpoints and prompt cache.
 
 ---
 
@@ -120,8 +149,8 @@ Incoming request { model, voice, input, response_format }
                         │ YES (pinned)
                         ▼
    ┌─────────────────────────────────────────────────────────┐
-   │ 1. voice matches one of the model's custom presets?    │
-   │    (as declared in its model.yaml `presets` list)      │
+   │ 1. voice matches a built-in preset name?                │
+   │    (from <repo>/presets.txt)                            │
    └───────────────────────────┬─────────────────────────────┘
                                │ YES → model's preset capability (+ instruct steering)
                                │ NO
@@ -143,8 +172,9 @@ Incoming request { model, voice, input, response_format }
 
 **Custom presets**
 
-- Matches one of the model's declared preset voices (see
-  `<model_name>_voices.txt` in the server root).
+- Matches one of the model's built-in preset voices, read from
+  `<repo>/presets.txt` (generate it with `tts-troupe-sync-presets`). The list
+  is mirrored as `<model_name>_voices.txt` in the server root for SillyTavern.
 - Inline tags in the input text (e.g. `[whisper]`, `[tone: angry]`, `{sad}`,
   `(sigh)`) are parsed into per-segment `instruct` steering for real-time
   emotional control.

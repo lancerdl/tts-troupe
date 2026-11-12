@@ -75,7 +75,7 @@ FAKE_MANIFEST = {
     "module": "adapter_module",
     "setup": {"factory": "FakeModel", "config_file": "config.yaml"},
     "capabilities": {
-        "voice_default": {
+        "voice_preset": {
             "call": "gen_preset",
             "args": {
                 "text": "text",
@@ -84,7 +84,6 @@ FAKE_MANIFEST = {
                 "mode": {"const": "fast"},
             },
             "presets": ["alloy", "echo"],
-            "default_voice": "alloy",
         },
         "voice_create": {
             "instance": "design",
@@ -96,13 +95,13 @@ FAKE_MANIFEST = {
     },
 }
 
-# Same adapter module, but only the voice_default capability is mapped.
+# Same adapter module, but only the voice_preset capability is mapped.
 MINIMAL_MANIFEST = {
     "name": "minimal-tts",
     "module": "adapter_module",
     "setup": {"factory": "FakeModel"},
     "capabilities": {
-        "voice_default": {
+        "voice_preset": {
             "call": "gen_preset",
             "args": {"text": "text", "voice": "voice"},
         },
@@ -115,7 +114,7 @@ BROKEN_MANIFEST = {
     "module": "adapter_module",
     "setup": {"factory": "BrokenModel"},
     "capabilities": {
-        "voice_default": {
+        "voice_preset": {
             "call": "gen_preset",
             "args": {"text": "text", "voice": "voice"},
         },
@@ -209,7 +208,7 @@ WIRE_MANIFEST = {
         "python": sys.executable,  # factory resolves absolute paths as-is
     },
     "capabilities": {
-        "voice_default": {
+        "voice_preset": {
             "call": "gen_preset",
             "args": {"text": "text", "voice": "voice", "instruct": "instruct"},
         },
@@ -298,9 +297,11 @@ WIRE_HOOK_ADAPTER_MODULE = textwrap.dedent(
             return {"spk": torch.ones(2, dtype=torch.float32),
                     "meta": ref_text}
 
-        def synthesize_with_prompt(self, text, prompt, ref_audio_path="", ref_text=""):
-            self.calls.append(("synthesize_with_prompt", text, prompt["meta"],
-                               ref_audio_path, ref_text))
+        def synthesize_clone(self, text, ref_audio_path="", ref_text="",
+                             instruct=None, prompt=None):
+            self.calls.append(
+                ("synthesize_clone", text, prompt["meta"] if prompt else None,
+                 ref_audio_path, ref_text))
             return (np.array([0.7, 0.8], dtype=np.float32), 12000)
     """
 )
@@ -314,7 +315,7 @@ WIRE_HOOK_MANIFEST = {
         "python": "",  # filled in by the factory (model venv interpreter)
     },
     "capabilities": {
-        "voice_default": {
+        "voice_preset": {
             "call": "gen_preset",
             "args": {"text": "text", "voice": "voice", "instruct": "instruct"},
         },
@@ -322,7 +323,7 @@ WIRE_HOOK_MANIFEST = {
             "implementation": "native",
             "prompt_cache": {
                 "extract": "extract_clone_prompt",
-                "synthesize": "synthesize_with_prompt",
+                "synthesize": "synthesize_clone",
                 "checkpoint": "base",
                 "versions": {"adapter": "0.5.4", "format": "1"},
             },
